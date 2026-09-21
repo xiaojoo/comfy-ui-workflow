@@ -10,6 +10,8 @@ import shutil
 import sys
 import urllib.parse
 import urllib.request
+import uuid
+from pathlib import Path
 
 from .config import COMFY, TOOLS
 
@@ -22,12 +24,14 @@ import run_graph  # noqa: E402  the same client gen_icons.py uses
 # else in the catalog is selectable but flagged: it exists, we have not gated its output.
 VERIFIED = {"unet": "z_image_turbo_int8_convrot.safetensors",
             "clip": "qwen_3_4b_fp8_mixed.safetensors",
-            "vae": "ae.safetensors"}
+            "vae": "ae.safetensors",
+            "upscale": "4x-UltraSharp.pth"}
 
 # /object_info node -> input key -> what the UI calls it
 SOURCES = {"UNETLoader": ("unet_name", "unet"),
            "CLIPLoader": ("clip_name", "clip"),
-           "VAELoader": ("vae_name", "vae")}
+           "VAELoader": ("vae_name", "vae"),
+           "UpscaleModelLoader": ("model_name", "upscale")}
 
 # WSL's ext4 volume is only reachable by UNC path from here; disk_usage on it returns
 # the real numbers, so the storage meter does not need a shell-out into the distro.
@@ -58,6 +62,30 @@ def collect(pid, timeout=900):
     """
     status, outputs, secs = run_graph.wait(pid, timeout=timeout)
     return status, run_graph.saved_files(outputs), secs
+
+
+def upload(src, name=None):
+    """Put a file we produced where LoadImage can see it, and return its stored name.
+
+    LoadImage only lists ComfyUI's own input/ directory, so an image this server
+    generated into output/ cannot be fed straight back to a video or 3D job -- it has
+    to go through the same POST /upload/image the browser's own upload button uses.
+    """
+    p = Path(src)
+    fname = name or p.name
+    boundary = uuid.uuid4().hex
+    body = b"".join([
+        f'--{boundary}\r\nContent-Disposition: form-data; name="image"; filename="{fname}"\r\n'
+        f'Content-Type: image/png\r\n\r\n'.encode(),
+        p.read_bytes(),
+        f'--{boundary}\r\nContent-Disposition: form-data; name="type"\r\n\r\ninput\r\n'.encode(),
+        f'--{boundary}\r\nContent-Disposition: form-data; name="overwrite"\r\n\r\ntrue\r\n'.encode(),
+        f"--{boundary}--\r\n".encode(),
+    ])
+    req = urllib.request.Request(f"{COMFY}/upload/image", data=body,
+                                 headers={"Content-Type": f"multipart/form-data; boundary={boundary}"})
+    r = json.loads(urllib.request.urlopen(req, timeout=60).read())
+    return r.get("name") or fname
 
 
 def running_ids():
@@ -123,6 +151,13 @@ def catalog():
             if isinstance(v, list) and v and isinstance(v[0], list):
                 opts = v[0]
         out[role] = [{"name": n, "verified": n == VERIFIED[role]} for n in sorted(opts)]
+    # The sampler and schedule names are the engine's own combo, not a list kept here:
+    # every studio graph samples through a plain KSampler node (70, 8, 24), so one
+    # query covers all three.
+    req = _get("/object_info/KSampler").get("KSampler", {}).get("input", {}).get("required", {})
+    for key, role in (("sampler_name", "samplers"), ("scheduler", "schedulers")):
+        v = req.get(key)
+        out[role] = sorted(v[0]) if isinstance(v, list) and isinstance(v[0], list) else []
     return out
 
 

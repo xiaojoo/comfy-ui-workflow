@@ -195,6 +195,10 @@ def create_task(body: TaskIn):
     if "prompt" in tpl["fields"] and not body.prompt.strip():
         raise HTTPException(422, "this template needs a prompt")
     params = {**tpl["defaults"], **body.params}
+    # An image-driven template with nothing bound would fail inside ComfyUI as
+    # "image not in list"; the caller can act on this instead.
+    if "image" in tpl["fields"] and not (params.get("image") or params.get("image_task")):
+        raise HTTPException(422, "这条工作流要先有一张图：在参数里选图，或在结果里点「做成视频」")
     if "prompt" in tpl["fields"]:
         params["prompt"] = body.prompt
     params["prefix"] = f"studio/{body.template}"

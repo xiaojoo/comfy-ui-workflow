@@ -12,9 +12,31 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 
 from . import comfy, gates, templates
+from .config import COMFY_OUTPUT_ROOT
 from .db import Session
 from .gates import Kit
 from .models import Asset, Batch, Task
+
+
+def _bind_image(params):
+    """Put a previously generated figure where LoadImage can read it, and say what failed.
+
+    The caller sends a task id, not a filename: output names belong to the engine, and a
+    stale one surfaces as a ComfyUI validation error nobody can act on.
+    """
+    src, idx = int(params["image_task"]), int(params.get("image_index", 0) or 0)
+    with Session() as s:
+        t = s.get(Task, src)
+        outs = list(t.outputs) if t else []
+    if not outs:
+        raise RuntimeError(f"任务 {src} 没有可用产物，先换一张图")
+    if idx >= len(outs):
+        raise RuntimeError(f"任务 {src} 只有 {len(outs)} 个产物，没有第 {idx + 1} 个")
+    o = outs[idx]
+    path = COMFY_OUTPUT_ROOT / o.get("subfolder", "") / o["filename"]
+    if not path.exists():
+        raise RuntimeError(f"引擎目录里找不到 {o['filename']}，文件可能已被清掉")
+    return comfy.upload(path)
 
 
 def _entry(msg):
@@ -85,6 +107,12 @@ class Runner:
 
         log = t.log
         try:
+            if params.get("image_task") and not params.get("image"):
+                log = stage(10, f"绑定参考图（取自任务 {params['image_task']}）", log)
+                params["image"] = _bind_image(params)
+                with Session() as s:
+                    s.get(Task, task_id).params = dict(params)
+                    s.commit()
             log = stage(15, "装配工作流图", log)
             graph = templates.graph_for(tpl, params)
             log = stage(30, f"提交 ComfyUI（{tpl['model']}）", log)

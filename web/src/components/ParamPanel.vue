@@ -3,8 +3,10 @@ import { computed, ref } from 'vue'
 import { useI18n } from '../i18n'
 import Select from './Select.vue'
 import NumberField from './NumberField.vue'
+import FileField from './FileField.vue'
 
-const props = defineProps({ template: Object, params: Object, models: Object, busy: Boolean, err: String })
+const props = defineProps({ template: Object, params: Object, models: Object, refShot: Object,
+                           busy: Boolean, err: String })
 const emit = defineEmits(['submit', 'close'])
 const { t } = useI18n()
 
@@ -44,12 +46,30 @@ const unetOptions = computed(() => unets.value.map((u) => ({
   value: u.name, label: `${u.name.replace('.safetensors', '')} · ${badge(u.name)}`, hint: tip(u.name),
 })))
 
+// The 4x weights are the engine's own list too, for the same reason as the unets.
+const upscaleOptions = computed(() => (props.models?.upscale || []).map((u) => ({
+  value: u.name, label: `${u.name} · ${u.verified ? t.value.pairMeasured : t.value.pairUnmeasured}`,
+})))
+
 const has = (f) => props.template?.fields.includes(f)
+
+// The two sampling names come from the engine's own KSampler combo. A run stored before
+// this list changed can carry a name the engine no longer offers, and a select with no
+// matching option renders blank -- which reads as "nothing chosen", not "this is gone",
+// so the odd value is kept and labelled instead of dropped.
+function named(list, cur) {
+  const seen = new Set(list || [])
+  const opts = [...seen].map((v) => ({ value: v, label: v }))
+  if (cur && !seen.has(cur)) opts.push({ value: cur, label: cur, hint: t.value.notInEngine })
+  return opts
+}
+const samplerOptions = computed(() => named(props.models?.samplers, props.params.sampler))
+const schedulerOptions = computed(() => named(props.models?.schedulers, props.params.scheduler))
 
 // Fields with no dedicated control get a plain input, inferred numeric or text from
 // the template's own default. New graph knobs then appear without editing this file.
 const DEDICATED = ['prompt', 'negative', 'width', 'height', 'batch', 'steps', 'cfg', 'seed', 'unet', 'clip',
-                   'shift', 'sampler', 'scheduler', 'denoise']
+                   'shift', 'sampler', 'scheduler', 'denoise', 'image', 'model']
 const extras = computed(() => (props.template?.fields || []).filter((f) => !DEDICATED.includes(f)))
 function isNum(f) { return typeof props.template?.defaults?.[f] === 'number' }
 function labelFor(f) { return t.value[f] || t.value.th[f] || f }
@@ -93,6 +113,10 @@ function go() {
           <Select v-model="params.unet" :options="unetOptions" :label="t.model" />
         </label>
 
+        <label v-if="has('model')">{{ t.upscaleModel }}
+          <Select v-model="params.model" :options="upscaleOptions" :label="t.upscaleModel" />
+        </label>
+
         <label v-if="has('prompt')" class="counted">{{ t.prompt }}
           <textarea v-model="params.prompt" rows="3" />
           <small class="count" :class="{ over: (params.prompt?.length || 0) > MAXPROMPT }">
@@ -104,6 +128,16 @@ function go() {
           <small class="count" :class="{ over: (params.negative?.length || 0) > MAXPROMPT }">
             {{ params.negative?.length || 0 }} / {{ MAXPROMPT }}
           </small>
+        </label>
+
+        <div v-if="refShot && !params.image" class="refrow">
+          <img :src="refShot.url" :alt="refShot.filename" />
+          <span>{{ t.refImage }} · {{ t.refFrom }} {{ refShot.from }}<br />
+            <small>{{ t.useForVideoHint }}</small></span>
+        </div>
+
+        <label v-if="has('image')" class="ff-row">{{ t.image }}
+          <FileField v-model="params.image" :label="t.image" />
         </label>
 
         <div v-if="extras.length" class="grp">
@@ -144,8 +178,8 @@ function go() {
 
       <div v-else class="adv">
         <label class="inrow">{{ t.shift }}<NumberField v-model="params.shift" :step="0.5" :label="t.shift" /></label>
-        <label class="inrow">{{ t.sampler }}<input v-model="params.sampler" /></label>
-        <label class="inrow">{{ t.scheduler }}<input v-model="params.scheduler" /></label>
+        <label class="inrow">{{ t.sampler }}<Select v-model="params.sampler" :options="samplerOptions" :label="t.sampler" /></label>
+        <label class="inrow">{{ t.scheduler }}<Select v-model="params.scheduler" :options="schedulerOptions" :label="t.scheduler" /></label>
         <label class="inrow">{{ t.denoise }}<NumberField v-model="params.denoise" :step="0.05" :label="t.denoise" /></label>
         <p class="hint">高级参数只在模板声明了对应节点时才生效。</p>
       </div>

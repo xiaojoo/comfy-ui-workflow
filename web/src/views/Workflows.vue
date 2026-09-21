@@ -19,10 +19,14 @@ const busy = ref(false)
 const drawer = ref(false)
 const err = ref('')
 const pageErr = ref('')
+// The figure a clip will be made from, kept out of `params` so it is never posted as a
+// graph knob: the backend receives the task id and index, and resolves the file itself.
+const refShot = ref(null)
 
 const THUMBS = { icon_flat: ['/thumbs/icon_flat.png'], icon_brand_tech: ['/thumbs/icon_tech.png'],
                  icon_batch: ['/thumbs/batch_bell.png', '/thumbs/batch_cloud.png',
-                              '/thumbs/batch_arrow_up.png', '/thumbs/batch_trash.png'] }
+                              '/thumbs/batch_arrow_up.png', '/thumbs/batch_trash.png'],
+                 char_portrait: ['/thumbs/char_portrait.png'], char_video: ['/thumbs/char_video.png'] }
 const thumb = (id) => THUMBS[id] || []
 
 const cats = computed(() => ['all', ...new Set(templates.value.map((x) => x.category))])
@@ -40,6 +44,7 @@ const onlyTpl = ref('')
 const lineRuns = computed(() => (onlyTpl.value ? runs.value.filter((x) => x.template === onlyTpl.value) : runs.value))
 
 function choose(tpl) {
+  refShot.value = null
   if (onlyTpl.value === tpl.id && drawer.value) {
     // Lifting the selection clears the inspected run too: 任务状态 and 执行日志 report on
     // the selected workflow, so with nothing selected they show no data rather than the
@@ -71,6 +76,7 @@ async function loadRuns() {
 function adopt(f) {
   const tpl = templates.value.find((x) => x.id === f.template)
   if (tpl) { picked.value = tpl; params.value = { ...f.params } }
+  refShot.value = null
   current.value = f
 }
 
@@ -95,6 +101,20 @@ async function submit() {
 async function favorite(v) {
   await api.favorite(current.value.id, v)
   current.value = await api.task(current.value.id)
+}
+
+// The ▷ on a finished figure: same drawer, different template, with that picture bound
+// as the clip's first frame. The preview stays on the figure while the form changes --
+// it is the thing being described, not the thing being edited.
+function useForVideo({ task, index, target }) {
+  const tpl = templates.value.find((x) => x.id === target)
+  if (!tpl) return
+  picked.value = tpl
+  params.value = { ...tpl.defaults, image_task: task.id, image_index: index }
+  refShot.value = { ...task.outputs[index], from: task.ref }
+  drawer.value = true
+  onlyTpl.value = tpl.id
+  err.value = ''
 }
 
 let timer = null
@@ -161,11 +181,11 @@ onBeforeUnmount(() => clearInterval(timer))
         </section>
 
         <ResultTabs :task="current" :runs="lineRuns" :templates="templates" :filtered="!!onlyTpl"
-                    @favorite="favorite" @pick="adopt" />
+                    @favorite="favorite" @pick="adopt" @useforvideo="useForVideo" />
       </div>
 
       <ParamPanel v-if="drawer && picked" :template="picked" :params="params" :models="models?.catalog"
-                  :busy="busy" :err="err" @submit="submit" @close="drawer = false" />
+                  :ref-shot="refShot" :busy="busy" :err="err" @submit="submit" @close="drawer = false" />
     </div>
   </div>
 </template>

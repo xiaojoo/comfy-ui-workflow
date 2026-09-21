@@ -5,8 +5,14 @@ import { useI18n } from '../i18n'
 import Lightbox from './Lightbox.vue'
 
 const props = defineProps({ task: Object, runs: Array, templates: Array, filtered: Boolean })
-const emit = defineEmits(['favorite', 'pick'])
+const emit = defineEmits(['favorite', 'pick', 'useforvideo'])
 const { t } = useI18n()
+
+// Which templates can take a figure as their first frame, asked of the template list
+// rather than hardcoded: a second image-driven video template would appear here without
+// anyone remembering to edit this file.
+const videoTargets = computed(() => (props.templates || [])
+  .filter((x) => x.media === 'video' && (x.fields || []).includes('image')))
 
 const outputs = computed(() => props.task?.outputs || [])
 const picked = ref(0)
@@ -145,6 +151,11 @@ watch(() => [props.runs?.length, tab.value], () => nextTick(observe))
                           :title="task.favorite ? t.favorited : t.favorite"
                           @click.stop="emit('favorite', !task.favorite)">
                     {{ task.favorite ? '★' : '☆' }}
+                  </button>
+                  <button v-for="vt in videoTargets" v-show="kindOf(current) === 'image'" :key="vt.id"
+                          class="iconbtn" :title="`${t.useForVideo} · ${vt.name}`"
+                          @click.stop="emit('useforvideo', { task, index: picked, target: vt.id })">
+                    ▷
                   </button>
                 </div>
               </div>
