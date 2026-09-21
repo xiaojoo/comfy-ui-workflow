@@ -7,7 +7,16 @@ const emit = defineEmits(['submit'])
 const { t } = useI18n()
 
 const adv = ref(false)
-const SIZES = [[512, 512], [768, 768], [1024, 1024], [1024, 768], [768, 1024]]
+// The template's own resolution is always offered: a video graph runs at 832x480,
+// which is not a picture size anyone would pick for an icon, and omitting it left
+// the select with no matching option -- rendered blank and silently unchangeable.
+const SIZES = computed(() => {
+  const base = [[512, 512], [768, 768], [1024, 1024], [1024, 768], [768, 1024]]
+  const d = props.template?.defaults
+  const own = d?.width && d?.height ? [[d.width, d.height]] : []
+  const seen = new Set()
+  return [...own, ...base].filter(([w, h]) => !seen.has(`${w}x${h}`) && seen.add(`${w}x${h}`))
+})
 const sizeKey = computed(() => `${props.params.width}x${props.params.height}`)
 
 function pickSize(v) {
@@ -16,11 +25,13 @@ function pickSize(v) {
   props.params.height = h
 }
 
-// The dropdown is the engine's own list. A weight we have not gated is offered but
-// labelled, because "selectable" and "measured" are different claims.
+// The dropdown is the engine's own list. "已量" here means this exact weight is the
+// pairing the icon numbers were measured on -- deliberately different wording from
+// a template's 已验证, which claims the graph ran, not that this weight is the one
+// behind the published figures.
 const unets = computed(() => props.models?.unet || [])
 function badge(name) {
-  return unets.value.find((u) => u.name === name)?.verified ? t.value.verified : t.value.unverified
+  return unets.value.find((u) => u.name === name)?.verified ? t.value.pairMeasured : t.value.pairUnmeasured
 }
 function tip(name) {
   return unets.value.find((u) => u.name === name)?.verified ? t.value.verifiedTip : t.value.unverifiedTip
@@ -28,12 +39,24 @@ function tip(name) {
 
 const has = (f) => props.template?.fields.includes(f)
 
+// Fields with no dedicated control get a plain input, inferred numeric or text from
+// the template's own default. New graph knobs then appear without editing this file.
+const DEDICATED = ['prompt', 'negative', 'width', 'height', 'batch', 'steps', 'cfg', 'seed', 'unet', 'clip',
+                   'shift', 'sampler', 'scheduler', 'denoise']
+const extras = computed(() => (props.template?.fields || []).filter((f) => !DEDICATED.includes(f)))
+function isNum(f) { return typeof props.template?.defaults?.[f] === 'number' }
+function labelFor(f) { return t.value[f] || t.value.th[f] || f }
+
+const err = ref('')
+const goLabel = computed(() => ({ video: t.value.generateVideo, model: t.value.generateModel }[props.template?.media]
+  || t.value.generate))
+
 function go() {
-  if (!props.params.prompt?.trim()) { err.value = t.value.needPrompt; return }
+  // Only prompt-taking templates are checked; the 3D chain is driven by an image.
+  if (has('prompt') && !props.params.prompt?.trim()) { err.value = t.value.needPrompt; return }
   err.value = ''
   emit('submit')
 }
-const err = ref('')
 </script>
 
 <template>
@@ -49,8 +72,14 @@ const err = ref('')
       </select>
     </label>
 
-    <label>{{ t.prompt }}<textarea v-model="params.prompt" rows="3" /></label>
+    <label v-if="has('prompt')">{{ t.prompt }}<textarea v-model="params.prompt" rows="3" /></label>
     <label v-if="has('negative')">{{ t.negative }}<textarea v-model="params.negative" rows="3" /></label>
+
+    <div v-if="extras.length" class="grp">
+      <label v-for="f in extras" :key="f">{{ labelFor(f) }}
+        <input v-model="params[f]" :type="isNum(f) ? 'number' : 'text'" />
+      </label>
+    </div>
 
     <div class="grp">
       <label v-if="has('width')" class="grow">{{ t.size }}
@@ -88,6 +117,6 @@ const err = ref('')
       <p class="hint">高级参数只在模板声明了对应节点时才生效。</p>
     </div>
 
-    <button class="go" :disabled="busy" @click="go">▶ {{ busy ? t.generating : t.generate }}</button>
+    <button class="go" :disabled="busy" @click="go">▶ {{ busy ? t.generating : goLabel }}</button>
   </section>
 </template>

@@ -50,9 +50,14 @@ def submit(graph, client_id):
 
 
 def collect(pid, timeout=900):
-    """(status, files, seconds) once the engine reports the prompt finished."""
+    """(status, files, seconds) once the engine reports the prompt finished.
+
+    Every saved file is returned, not just images: this line's deliverables are
+    mp4 and glb as often as png, and filtering on kind silently produced tasks
+    that reported success with nothing attached.
+    """
     status, outputs, secs = run_graph.wait(pid, timeout=timeout)
-    return status, [f for f in run_graph.saved_files(outputs) if f["kind"] == "images"], secs
+    return status, run_graph.saved_files(outputs), secs
 
 
 def alive():

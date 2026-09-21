@@ -57,35 +57,54 @@ def mesh_measures(verts, tris):
     return abs(vol), area
 
 
-def write_glb(path, verts, tris):
-    pos = b"".join(struct.pack("<3f", *v) for v in verts)
-    idx = b"".join(struct.pack("<3I", *t) for t in tris)
-    while len(pos) % 4:
-        pos += b"\0"
-    while len(idx) % 4:
-        idx += b"\0"
+def write_glb(path, verts, tris, normals=None, uvs=None):
+    """POSITION + indices, plus NORMAL / TEXCOORD_0 when the caller has them.
+
+    Left-to-right attribute order keeps the no-extras output byte-identical to the
+    original writer, so the analytic truth sphere this feeds stays comparable.
+    """
     mn = [min(v[i] for v in verts) for i in range(3)]
     mx = [max(v[i] for v in verts) for i in range(3)]
+    attrs = [("POSITION", verts, {"min": mn, "max": mx})]
+    if normals is not None:
+        attrs.append(("NORMAL", normals, {}))
+    if uvs is not None:
+        attrs.append(("TEXCOORD_0", uvs, {}))
+
+    blobs, views, accessors, primitive = [], [], [], {}
+    for name, rows, extra in attrs:
+        width = 3 if name != "TEXCOORD_0" else 2
+        buf = b"".join(struct.pack(f"<{width}f", *r[:width]) for r in rows)
+        while len(buf) % 4:
+            buf += b"\0"
+        accessors.append({"bufferView": len(views), "componentType": 5126, "count": len(rows),
+                          "type": "VEC2" if width == 2 else "VEC3", **extra})
+        views.append({"buffer": 0, "byteOffset": sum(len(b) for b in blobs), "byteLength": len(buf)})
+        blobs.append(buf)
+        primitive[name] = len(accessors) - 1
+
+    idx = b"".join(struct.pack("<3I", *t) for t in tris)
+    while len(idx) % 4:
+        idx += b"\0"
+    views.append({"buffer": 0, "byteOffset": sum(len(b) for b in blobs), "byteLength": len(idx)})
+    accessors.append({"bufferView": len(views) - 1, "componentType": 5125,
+                      "count": len(tris) * 3, "type": "SCALAR"})
+    blobs.append(idx)
+
     gltf = {
         "asset": {"version": "2.0"},
         "scene": 0,
         "scenes": [{"nodes": [0]}],
         "nodes": [{"mesh": 0}],
-        "meshes": [{"primitives": [{"attributes": {"POSITION": 0}, "indices": 1, "mode": 4}]}],
-        "accessors": [
-            {"bufferView": 0, "componentType": 5126, "count": len(verts), "type": "VEC3", "min": mn, "max": mx},
-            {"bufferView": 1, "componentType": 5125, "count": len(tris) * 3, "type": "SCALAR"},
-        ],
-        "bufferViews": [
-            {"buffer": 0, "byteOffset": 0, "byteLength": len(pos)},
-            {"buffer": 0, "byteOffset": len(pos), "byteLength": len(idx)},
-        ],
-        "buffers": [{"byteLength": len(pos) + len(idx)}],
+        "meshes": [{"primitives": [{"attributes": primitive, "indices": len(accessors) - 1, "mode": 4}]}],
+        "accessors": accessors,
+        "bufferViews": views,
+        "buffers": [{"byteLength": sum(len(b) for b in blobs)}],
     }
     js = json.dumps(gltf, separators=(",", ":")).encode()
     while len(js) % 4:
         js += b" "
-    bin_chunk = pos + idx
+    bin_chunk = b"".join(blobs)
     total = 12 + 8 + len(js) + 8 + len(bin_chunk)
     Path(path).write_bytes(
         struct.pack("<III", 0x46546C67, 2, total)

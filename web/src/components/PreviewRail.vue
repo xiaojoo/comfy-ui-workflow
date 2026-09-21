@@ -11,6 +11,14 @@ const picked = ref(0)
 watch(() => props.task?.id, () => { picked.value = 0 })
 const current = computed(() => outputs.value[Math.min(picked.value, outputs.value.length - 1)] || null)
 
+// By extension, not by task.media: the 3D chain emits a glb alongside two png
+// renders, so one label for the whole task would render the mesh as an image.
+function kindOf(f) {
+  const e = (f?.filename || '').split('.').pop()?.toLowerCase()
+  return e === 'mp4' || e === 'webm' ? 'video' : e === 'glb' || e === 'gltf' ? 'model' : 'image'
+}
+const kind = computed(() => kindOf(current.value))
+
 function local(iso) {
   return iso ? new Date(iso).toLocaleTimeString([], { hour12: false }) : ''
 }
@@ -24,12 +32,19 @@ const running = computed(() => ['queued', 'running'].includes(props.task?.state)
       <div v-if="!current" class="empty tall">{{ t.noPreview }}</div>
       <template v-else>
         <div class="hero-img checker">
-          <img :src="current.url" :alt="current.filename" />
+          <video v-if="kind === 'video'" :src="current.url" controls autoplay loop muted :poster="null" />
+          <img v-else-if="kind === 'image'" :src="current.url" :alt="current.filename" />
+          <div v-else class="modelcard">
+            <span class="big">GLB</span>
+            <code>{{ current.filename }}</code>
+            <p>网格文件需下载后在查看器中打开；本页不内置 3D 查看。</p>
+          </div>
         </div>
         <div v-if="outputs.length > 1" class="variants">
           <button v-for="(o, i) in outputs" :key="o.filename" :class="{ on: i === picked }"
                   @click="picked = i">
-            <img :src="o.url" :alt="o.filename" />
+            <img v-if="kindOf(o) === 'image'" :src="o.url" :alt="o.filename" />
+            <span v-else class="ext">{{ o.filename.split('.').pop() }}</span>
           </button>
         </div>
         <dl class="facts">

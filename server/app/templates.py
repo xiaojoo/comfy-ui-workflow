@@ -10,9 +10,9 @@ from pathlib import Path
 
 from .config import WORKFLOWS
 
-# UI field -> (node id, input key) in gen_icon.json. Declared once so the server,
-# not the browser, decides which knob moves which node.
-GEN_FIELDS = {
+# UI field -> (node id, input key). Per template, because each graph puts the same
+# idea in a different node -- a shared map would silently write into the wrong graph.
+GEN_MAP = {
     "prompt": ("67", "text"),
     "negative": ("71", "text"),
     "width": ("68", "width"),
@@ -28,6 +28,34 @@ GEN_FIELDS = {
     "sampler": ("70", "sampler_name"),
     "scheduler": ("70", "scheduler"),
     "denoise": ("70", "denoise"),
+}
+
+VID_MAP = {
+    "prompt": ("5", "text"),
+    "negative": ("6", "text"),
+    "width": ("7", "width"),
+    "height": ("7", "height"),
+    "length": ("7", "length"),
+    "steps": ("8", "steps"),
+    "cfg": ("8", "cfg"),
+    "seed": ("8", "seed"),
+    "unet": ("1", "unet_name"),
+    "clip": ("2", "clip_name"),
+    "prefix": ("11", "filename_prefix"),
+    "shift": ("4", "shift"),
+    "sampler": ("8", "sampler_name"),
+    "scheduler": ("8", "scheduler"),
+    "denoise": ("8", "denoise"),
+    "fps": ("10", "fps"),
+}
+
+D3_MAP = {
+    "image": ("2", "image"),
+    "seed": ("24", "seed"),
+    "octree": ("25", "octree_resolution"),
+    "chunks": ("25", "num_chunks"),
+    "threshold": ("26", "threshold"),
+    "prefix": ("27", "filename_prefix"),
 }
 
 ICON_STYLE = ("flat vector app icon, one single centered object, solid pure white background, "
@@ -81,10 +109,42 @@ TEMPLATES = [
         "verified": True, "model": "Z-Image Turbo int8", "model_en": "Z-Image Turbo int8",
         "spec": "1024×1024 · 4张",
     },
+    {
+        "id": "wan_t2v", "graph": "wan_t2v.json", "category": "enterprise_icon",
+        "name": "图标动画-文生视频", "name_en": "Icon motion, text to video",
+        "desc": "Wan 2.1 1.3B 出短动效。5 秒实测 136.5s、峰值 13.03 GiB，不需要提 WSL 内存。",
+        "desc_en": "Wan 2.1 1.3B short motion. Measured 5s clip: 136.5s wall, 13.03 GiB peak, no WSL bump needed.",
+        "map": VID_MAP,
+        "fields": ["prompt", "negative", "width", "height", "length", "steps", "cfg", "seed", "unet", "clip", "fps"],
+        "defaults": {"prompt": "a flat vector gear icon rotating slowly on a white background, clean geometry, steady camera",
+                     "negative": "worst quality, blurry, jittery, distorted, watermarks, text",
+                     "width": 832, "height": 480, "length": 33, "steps": 20, "cfg": 6.0,
+                     "seed": 42, "fps": 16.0, "unet": "wan2.1_t2v_1.3B_fp16.safetensors",
+                     "clip": "umt5_xxl_fp8_e4m3fn_scaled.safetensors", "shift": 8.0,
+                     "sampler": "euler", "scheduler": "simple", "denoise": 1.0},
+        "verified": True, "model": "Wan 2.1 T2V 1.3B", "model_en": "Wan 2.1 T2V 1.3B",
+        "spec": "832×480 · 33帧", "media": "video",
+    },
+    {
+        "id": "hunyuan3d", "graph": "3d_d0_chain.json", "category": "enterprise_icon",
+        "name": "图标转 3D 网格", "name_en": "Icon to 3D mesh",
+        "desc": "单张图 → Hunyuan3D 2.1 → 降面/焊接/补洞 → GLB + 渲染图。输入须是 ComfyUI input 目录里的文件。",
+        "desc_en": "Image to Hunyuan3D 2.1 to decimate/weld/fill to GLB plus renders. Input is a filename in ComfyUI's input dir.",
+        "map": D3_MAP,
+        "fields": ["image", "seed", "octree", "threshold"],
+        "defaults": {"image": "test.jpg", "seed": 42, "octree": 128, "threshold": 0.6, "chunks": 8000},
+        "verified": True, "model": "Hunyuan3D 2.1", "model_en": "Hunyuan3D 2.1",
+        "spec": "octree 128 · 工作点", "media": "model",
+    },
 ]
 
 for t in TEMPLATES:
-    t["defaults"] = {**BASE, **t["defaults"]}
+    t.setdefault("map", GEN_MAP)
+    t.setdefault("media", "image")
+    # BASE is the image-graph's shared knob set. The video and 3D graphs have their
+    # own weights and samplers, so merging it in would store parameters they ignore.
+    if t["map"] is GEN_MAP:
+        t["defaults"] = {**BASE, **t["defaults"]}
 
 BY_ID = {t["id"]: t for t in TEMPLATES}
 
@@ -98,7 +158,7 @@ def graph_for(template, params):
     g = json.loads((WORKFLOWS / template["graph"]).read_text(encoding="utf-8"))
     merged = {**template["defaults"], **params}
     style = merged.pop("style", "")
-    for field, (node, key) in GEN_FIELDS.items():
+    for field, (node, key) in template["map"].items():
         if field not in merged or node not in g:
             continue
         value = merged[field]
@@ -114,4 +174,4 @@ def public():
              "desc": t["desc"], "desc_en": t["desc_en"], "fields": t["fields"],
              "defaults": {k: v for k, v in t["defaults"].items() if k != "style"},
              "verified": t["verified"], "model": t["model"], "model_en": t["model_en"],
-             "spec": t["spec"]} for t in TEMPLATES]
+             "media": t["media"], "spec": t["spec"]} for t in TEMPLATES]

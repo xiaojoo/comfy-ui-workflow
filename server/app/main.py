@@ -171,7 +171,7 @@ def svg_of(batch_id: int, asset_id: int, stage: str = "flat"):
 
 class TaskIn(BaseModel):
     template: str
-    prompt: str = Field(min_length=1, max_length=2000)
+    prompt: str = Field(default="", max_length=2000)
     params: dict = Field(default_factory=dict)
 
 
@@ -191,10 +191,16 @@ def create_task(body: TaskIn):
     tpl = templates.BY_ID.get(body.template)
     if tpl is None:
         raise HTTPException(422, f"unknown template {body.template!r}")
-    params = {**tpl["defaults"], **body.params, "prompt": body.prompt}
+    # Only prompt-taking templates require one; the 3D chain is driven by an image.
+    if "prompt" in tpl["fields"] and not body.prompt.strip():
+        raise HTTPException(422, "this template needs a prompt")
+    params = {**tpl["defaults"], **body.params}
+    if "prompt" in tpl["fields"]:
+        params["prompt"] = body.prompt
     params["prefix"] = f"studio/{body.template}"
+    title = body.prompt[:60] if "prompt" in tpl["fields"] else str(params.get("image", tpl["name"]))
     with Session() as s:
-        t = Task(template=body.template, title=body.prompt[:60], model=tpl["model"],
+        t = Task(template=body.template, title=title, model=tpl["model"],
                  params=params, state="queued")
         s.add(t)
         s.commit()
@@ -240,7 +246,9 @@ def favorite(task_id: int, body: Favorite):
 
 
 def _task_row(t, full=False):
+    tpl = templates.BY_ID.get(t.template)
     row = {"id": t.id, "ref": t.ref, "template": t.template, "title": t.title, "model": t.model,
+           "media": tpl["media"] if tpl else "image",
            "state": t.state, "progress": t.progress, "error": t.error,
            "favorite": t.favorite, "seconds": t.seconds,
            "created_at": t.created_at, "finished_at": t.finished_at,

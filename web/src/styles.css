@@ -153,6 +153,12 @@ button.fav { border-color: var(--warn); color: var(--warn); }
 .rail { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
 .hero-img { display: grid; place-items: center; border-radius: 10px; aspect-ratio: 1; border: 1px solid var(--line-2); }
 .hero-img img { width: 100%; height: 100%; object-fit: contain; }
+.hero-img video { width: 100%; height: auto; max-height: 100%; background: #000; }
+.modelcard { text-align: center; padding: 20px; }
+.modelcard .big { display: block; font-size: 30px; font-weight: 700; color: var(--accent-2); letter-spacing: .1em; }
+.modelcard code { display: block; font-size: 11px; color: var(--muted); margin: 8px 0; word-break: break-all; }
+.modelcard p { font-size: 11.5px; color: var(--muted); margin: 0; }
+.variants .ext { display: grid; place-items: center; width: 100%; height: 100%; font-size: 10px; color: var(--muted); text-transform: uppercase; }
 .checker {
   background-image: linear-gradient(45deg, #1b2540 25%, transparent 25%, transparent 75%, #1b2540 75%),
                     linear-gradient(45deg, #1b2540 25%, transparent 25%, transparent 75%, #1b2540 75%);
