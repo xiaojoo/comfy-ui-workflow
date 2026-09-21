@@ -133,10 +133,12 @@ function go() {
           <NumberField class="box" v-model="params.cfg" :min="0.5" :max="10" :step="0.1" :label="t.cfg" />
         </div>
 
-        <label v-if="has('seed')" class="seedrow">{{ t.seed }}
-          <NumberField v-model="params.seed" :min="-1" :label="t.seed" />
-          <button class="ghost seedroll" :title="t.randomSeed" :aria-label="t.randomSeed"
-                  @click="params.seed = Math.floor(Math.random() * 1e9)">↻</button>
+        <label v-if="has('seed')">{{ t.seed }}
+          <span class="seedctl">
+            <NumberField v-model="params.seed" :min="-1" :label="t.seed" />
+            <button class="ghost seedroll" :title="t.randomSeed" :aria-label="t.randomSeed"
+                    @click="params.seed = Math.floor(Math.random() * 1e9)">↻</button>
+          </span>
         </label>
       </template>
 

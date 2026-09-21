@@ -2,7 +2,7 @@
 import { computed, ref, watch } from 'vue'
 import { useI18n } from '../i18n'
 
-const props = defineProps({ tasks: Array })
+const props = defineProps({ tasks: Array, names: Object, active: Number })
 const emit = defineEmits(['pick'])
 const { t } = useI18n()
 
@@ -47,25 +47,28 @@ function stamp(iso) {
       </button>
     </div>
     <p v-if="!shown.length" class="hint">{{ t.emptyTasks }}</p>
-    <table v-else class="tasks">
-      <thead>
-        <tr>
-          <th>{{ t.th.ref }}</th><th>{{ t.th.template }}</th><th>{{ t.th.model }}</th>
-          <th>{{ t.th.params }}</th><th>{{ t.th.state }}</th><th>{{ t.th.created }}</th><th></th>
-        </tr>
-      </thead>
-      <tbody>
-        <tr v-for="x in shown" :key="x.id">
-          <td class="mono">{{ x.ref }}</td>
-          <td>{{ x.title || x.template }}</td>
-          <td class="muted">{{ x.model }}</td>
-          <td class="mono">{{ params(x) }}</td>
-          <td><span class="chip" :class="x.state">{{ t.state[x.state] || x.state }}</span></td>
-          <td class="mono">{{ stamp(x.created_at) }}</td>
-          <td><button class="ghost sm" @click="emit('pick', x)">{{ t.view }}</button></td>
-        </tr>
-      </tbody>
-    </table>
+    <div v-else class="tscroll">
+      <table class="tasks">
+        <thead>
+          <tr>
+            <th>{{ t.th.ref }}</th><th>{{ t.th.template }}</th><th>{{ t.th.model }}</th>
+            <th>{{ t.th.params }}</th><th>{{ t.th.state }}</th><th>{{ t.th.created }}</th>
+            <th class="actions-col">{{ t.th.actions }}</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr v-for="x in shown" :key="x.id" :class="{ on: x.id === active }">
+            <td class="mono">{{ x.ref }}</td>
+            <td>{{ names?.[x.template] || x.template }}</td>
+            <td class="muted">{{ x.model }}</td>
+            <td class="mono">{{ params(x) }}</td>
+            <td><span class="chip" :class="x.state">{{ t.state[x.state] || x.state }}</span></td>
+            <td class="mono">{{ stamp(x.created_at) }}</td>
+            <td class="actions"><button class="ghost sm" @click="emit('pick', x)">{{ t.view }}</button></td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
     <div v-if="pages > 1" class="pager">
       <button class="ghost sm" :disabled="page === 1" :title="t.prevPage" @click="page--">‹</button>
       <span class="mono">{{ page }} / {{ pages }}</span>

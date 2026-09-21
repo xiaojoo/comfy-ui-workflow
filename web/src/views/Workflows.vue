@@ -1,13 +1,11 @@
 <script setup>
 import { computed, onBeforeUnmount, ref } from 'vue'
-import { useRoute } from 'vue-router'
 import { api } from '../api'
 import { useI18n } from '../i18n'
 import ParamPanel from '../components/ParamPanel.vue'
 import ResultTabs from '../components/ResultTabs.vue'
 
 const { t } = useI18n()
-const route = useRoute()
 
 const models = ref(null)
 const templates = ref([])
@@ -37,7 +35,7 @@ const shown = computed(() => templates.value.filter((x) => {
 
 // Clicking a card filters the result line to that workflow and configures it; clicking
 // the same card again lifts both. The filter is not the selection: picking a run in the
-// line (or arriving with ?task=) changes the form without hiding the other workflows.
+// line changes the form without hiding the other workflows.
 const onlyTpl = ref('')
 const lineRuns = computed(() => (onlyTpl.value ? runs.value.filter((x) => x.template === onlyTpl.value) : runs.value))
 
@@ -106,9 +104,8 @@ async function boot() {
     models.value = m
     templates.value = tp.templates
     await loadRuns()
-    // Nothing is inspected until he picks: ?task= is how the recent-tasks page hands a
-    // row back, and clicking a tile in the line is the other way in.
-    if (Number(route.query.task)) await show(Number(route.query.task))
+    // Nothing is inspected until he picks: clicking a tile in the preview line is the
+    // only way in, so the page never opens a run it was not asked to show.
   } catch (e) {
     pageErr.value = e.message
   }

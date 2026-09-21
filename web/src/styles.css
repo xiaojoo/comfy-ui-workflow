@@ -221,7 +221,7 @@ input[type=range] { padding: 0; accent-color: var(--accent); margin-top: 0; }
 /* The roll button belongs to the seed row, so it takes the field's own box: the shared
    .sm size made it 25.05px next to a 35.38px input. */
 .seedroll { display: grid; place-items: center; flex: none; width: var(--ctl-h); height: var(--ctl-h);
-            margin-top: 4px; padding: 0; font-size: 14px; line-height: 1; }
+            padding: 0; font-size: 14px; line-height: 1; }
 .sbtn:focus-visible { color: var(--fg); outline: none; }
 .sbtn:active:not(:disabled) { color: var(--accent-2); }
 .sbtn:disabled { opacity: .32; cursor: not-allowed; }
@@ -269,8 +269,13 @@ button.fav { border-color: var(--warn); color: var(--warn); }
 .grp { display: grid; grid-template-columns: 1fr 104px; gap: 10px; }
 .slider { display: grid; grid-template-columns: 74px 1fr 96px; align-items: center; gap: 9px; margin-bottom: 10px; font-size: 11.5px; color: var(--muted); }
 .slider .box { margin-top: 0; }
-.seedrow { display: flex; align-items: center; gap: 8px; }
-.seedrow .num { flex: 1; }
+/* The seed row is laid out like every other field in the drawer: the label owns its
+   line, and the stepper shares the line below it with the roll button. That line is
+   what carries the 4px gap, so neither control needs one of its own. The cap is the
+   图片尺寸 column (.grp's first track) so the two right edges line up, and the roll
+   stays against the field rather than the row's right edge. */
+.seedctl { display: flex; gap: 8px; margin-top: 4px; }
+.seedctl .num { flex: 1; max-width: 274px; margin-top: 0; }
 .counted { position: relative; }
 .count { position: absolute; right: 0; top: 0; font-family: var(--mono); font-size: 10.5px; color: var(--muted); }
 .count.over { color: var(--bad); }
@@ -364,17 +369,59 @@ button.fav { border-color: var(--warn); color: var(--warn); }
 .log li.last time { color: var(--ok); }
 
 /* ---------------------------------------------------------------- tasks */
-table.tasks { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+/* The row stops fitting as soon as the drawer takes its track or the window narrows,
+   so the table scrolls sideways and the two columns that name and act on a task stay
+   put. separate (not collapse) because a collapsed border is not painted by a sticky
+   cell, which then reads as a row with a hole in it. */
+.tscroll { overflow-x: auto; }
+table.tasks { width: max-content; min-width: 100%; border-collapse: separate; border-spacing: 0;
+              font-variant-numeric: tabular-nums; }
+/* The five columns between the sticky pair take the leftover table width in proportion
+   to their content; the two sticky ones refuse it. 1px plus the nowrap below is how a
+   column says "no" -- and the actions column needs its own floor, because 1px there was
+   measured holding it at 40px while its button is 58px wide. Without this the stretch
+   smeared over all seven and padded 任务 ID to 218px and 操作 to 95px of dead space. */
+table.tasks th:first-child, table.tasks td:first-child,
+table.tasks th.actions-col, table.tasks td.actions { width: 1px; }
+table.tasks th.actions-col, table.tasks td.actions { min-width: max-content; }
 table.tasks th, table.tasks td { text-align: left; padding: 7px 8px; border-bottom: 1px solid var(--line); font-size: 12px; }
 table.tasks th { color: var(--muted); font-weight: 500; font-size: 11px; text-transform: uppercase; letter-spacing: .04em; }
-table.tasks tr:hover td { background: var(--panel-2); }
-/* The title column is the only one allowed to wrap; a narrow "查看" otherwise
-   breaks one character per line. */
-table.tasks td:not(:nth-child(2)), table.tasks th:not(:nth-child(2)) { white-space: nowrap; }
-table.tasks td:nth-child(2) { max-width: 240px; }
+table.tasks tr:hover td, table.tasks tr.on td { background: var(--panel-2); }
+/* Nothing here wraps: a narrow "查看" otherwise breaks one character per line, and a
+   wrappable column lets the filler squeeze it down to one glyph -- measured 33px on the
+   workflow names before this was made uniform. */
+table.tasks th, table.tasks td { white-space: nowrap; }
+table.tasks th:first-child, table.tasks td:first-child { position: sticky; left: 0; z-index: 1; background: var(--panel); }
+table.tasks th.actions-col, table.tasks td.actions { position: sticky; right: 0; z-index: 1; text-align: center;
+                                                     background: var(--panel); border-left: 1px solid var(--line); }
+table.tasks tr:hover td:first-child, table.tasks tr:hover td.actions,
+table.tasks tr.on td:first-child, table.tasks tr.on td.actions { background: var(--panel-2); }
 .mono { font-family: var(--mono); font-size: 11.5px; }
 .pager { display: flex; align-items: center; gap: 10px; margin-top: 12px; }
 .pager .hint { margin: 0; }
+
+/* --------------------------------------------------------- task detail drawer */
+/* The drawer title line is the workflow name plus its state; the chip never shrinks. */
+.dtitle h2 .chip { flex: none; }
+.dsec { margin: 18px 0 8px; font-size: 10.5px; font-weight: 500; text-transform: uppercase;
+        letter-spacing: .06em; color: var(--muted); }
+.plist { display: grid; gap: 6px; margin: 0; }
+.plist > div { display: grid; grid-template-columns: 84px minmax(0, 1fr); gap: 10px; align-items: baseline; }
+.plist dt { font-size: 11px; color: var(--muted); }
+.plist dd { margin: 0; font-family: var(--mono); font-size: 11.5px; overflow-wrap: anywhere; }
+.plist dd.clip { max-height: 120px; overflow-y: auto; white-space: pre-wrap; }
+.files { display: grid; grid-template-columns: repeat(auto-fill, minmax(104px, 1fr)); gap: 9px; margin: 0; }
+.file { position: relative; margin: 0; min-width: 0; }
+.file .thumb { position: relative; display: grid; place-items: center; aspect-ratio: 1; overflow: hidden;
+               cursor: pointer; border-radius: 8px; border: 1px solid var(--line-2); background: var(--panel-2); }
+.file .thumb img, .file .thumb video { width: 100%; height: 100%; object-fit: contain; display: block; background: #fff; }
+.file .thumb .play { left: 5px; bottom: 5px; width: 20px; height: 20px; border-radius: 5px; font-size: 9px; }
+/* Outside the thumb, because the thumb clips: the download has to survive the corner
+   it sits in. */
+.file .dl { position: absolute; top: 5px; right: 5px; width: 22px; height: 22px; font-size: 11px; }
+.file figcaption { margin-top: 5px; }
+.file .fnm { display: block; font-family: var(--mono); font-size: 10px; color: var(--muted);
+             overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 /* ---------------------------------------------------------------- chips + shared */
 .chip {

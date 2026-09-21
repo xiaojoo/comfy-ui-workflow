@@ -2,6 +2,7 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
 import { api } from '../api'
 import { useI18n } from '../i18n'
+import Lightbox from './Lightbox.vue'
 
 const props = defineProps({ task: Object, runs: Array, templates: Array, filtered: Boolean })
 const emit = defineEmits(['favorite', 'pick'])
@@ -66,10 +67,6 @@ async function choose(row) {
   if (current.value) big.value = row
 }
 
-function onKey(e) {
-  if (e.key === 'Escape') big.value = null
-}
-
 const line = computed(() => (props.runs || []).map((r) => ({ id: r.id, run: r, task: full[r.id] || null })))
 const nameOf = (row) => props.templates?.find((x) => x.id === (row.task?.template || row.run.template))?.name
   || row.run.template
@@ -107,12 +104,10 @@ onMounted(() => {
   }, { rootMargin: '300px' })
   nextTick(observe)
   window.addEventListener('resize', measure)
-  document.addEventListener('keydown', onKey)
 })
 onBeforeUnmount(() => {
   io?.disconnect()
   window.removeEventListener('resize', measure)
-  document.removeEventListener('keydown', onKey)
 })
 watch(() => [props.runs?.length, tab.value], () => nextTick(observe))
 </script>
@@ -203,20 +198,5 @@ watch(() => [props.runs?.length, tab.value], () => nextTick(observe))
     </div>
   </section>
 
-  <Teleport to="body">
-    <div v-if="big && current" class="lightbox" @click.self="big = null">
-      <div class="lbbox">
-        <header>
-          <b>{{ nameOf(big) }}</b>
-          <span class="mono">{{ task.ref }}</span>
-          <span class="sp" />
-          <a class="iconbtn" :href="current.url" :download="current.filename" :title="t.download">⬇</a>
-          <button class="iconbtn" :title="t.close" @click="big = null">✕</button>
-        </header>
-        <video v-if="kindOf(current) === 'video'" :src="current.url" controls autoplay muted playsinline />
-        <img v-else-if="kindOf(current) === 'image'" :src="current.url" :alt="current.filename" />
-        <p v-else class="lbnote">网格文件需下载后在查看器中打开；本页不内置 3D 查看。</p>
-      </div>
-    </div>
-  </Teleport>
+  <Lightbox v-if="big && current" :title="nameOf(big)" :code="task.ref" :file="current" @close="big = null" />
 </template>
