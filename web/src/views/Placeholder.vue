@@ -10,6 +10,6 @@ const { t } = useI18n()
     <h2>{{ t.nav[navKey] }}</h2>
     <p class="big">{{ t.navTodo }}</p>
     <p class="hint">{{ t.navTodoBody }}</p>
-    <RouterLink class="back" to="/">{{ t.nav.home }}</RouterLink>
+    <RouterLink class="back" to="/">{{ t.nav.workflows }}</RouterLink>
   </section>
 </template>

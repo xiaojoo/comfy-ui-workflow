@@ -1,5 +1,5 @@
 <script setup>
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { useI18n } from '../i18n'
 
 const props = defineProps({ tasks: Array })
@@ -9,12 +9,21 @@ const { t } = useI18n()
 const TABS = { all: 'tabAll', running: 'tabRunning', done: 'tabDone', failed: 'tabFailed' }
 const tab = ref('all')
 
-const shown = computed(() => props.tasks.filter((x) => {
+// The list endpoint caps at 200 rows and has no offset, so the paging is over what
+// the page already holds -- enough for the run history this box actually shows.
+const PER = 10
+const page = ref(1)
+const filtered = computed(() => props.tasks.filter((x) => {
   if (tab.value === 'all') return true
   if (tab.value === 'running') return ['queued', 'running'].includes(x.state)
   if (tab.value === 'failed') return x.state === 'error'
   return x.state === 'done'
 }))
+const pages = computed(() => Math.max(1, Math.ceil(filtered.value.length / PER)))
+const shown = computed(() => filtered.value.slice((page.value - 1) * PER, page.value * PER))
+
+watch(tab, () => { page.value = 1 })
+watch(pages, (n) => { if (page.value > n) page.value = n })
 
 // Rendered from whichever keys this task actually carries: an image run has no
 // length and a video run has no batch, and a fixed template showed "undefined步"
@@ -32,13 +41,11 @@ function stamp(iso) {
 
 <template>
   <section class="card">
-    <h2>{{ t.recent }}
-      <span class="tabs">
-        <button v-for="(lbl, k) in TABS" :key="k" class="ghost sm" :class="{ on: tab === k }" @click="tab = k">
-          {{ t[lbl] }}
-        </button>
-      </span>
-    </h2>
+    <div class="rtabs">
+      <button v-for="(lbl, k) in TABS" :key="k" class="ghost sm" :class="{ on: tab === k }" @click="tab = k">
+        {{ t[lbl] }}
+      </button>
+    </div>
     <p v-if="!shown.length" class="hint">{{ t.emptyTasks }}</p>
     <table v-else class="tasks">
       <thead>
@@ -59,5 +66,11 @@ function stamp(iso) {
         </tr>
       </tbody>
     </table>
+    <div v-if="pages > 1" class="pager">
+      <button class="ghost sm" :disabled="page === 1" :title="t.prevPage" @click="page--">‹</button>
+      <span class="mono">{{ page }} / {{ pages }}</span>
+      <button class="ghost sm" :disabled="page === pages" :title="t.nextPage" @click="page++">›</button>
+      <span class="hint">{{ t.rowsTotal }} {{ filtered.length }} · {{ t.perPage }} {{ PER }}</span>
+    </div>
   </section>
 </template>
