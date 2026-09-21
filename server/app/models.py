@@ -1,0 +1,52 @@
+"""Schema for a single-machine, many-batch deployment.
+
+Deliberately plain SQLite via SQLAlchemy so the same models migrate to Postgres
+without rethinking the domain -- but no multi-user/roles yet, which is what
+"single machine" bought us.
+"""
+
+from datetime import datetime, timezone
+
+from sqlalchemy import JSON, DateTime, ForeignKey, Integer, String, Text
+from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
+
+
+def now():
+    return datetime.now(timezone.utc)
+
+
+class Base(DeclarativeBase):
+    pass
+
+
+class Batch(Base):
+    __tablename__ = "batches"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String)
+    kit: Mapped[dict] = mapped_column(JSON)
+    state: Mapped[str] = mapped_column(String, default="queued", index=True)
+    error: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=now)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime)
+
+    assets: Mapped[list["Asset"]] = relationship(back_populates="batch", cascade="all, delete-orphan")
+
+
+class Asset(Base):
+    __tablename__ = "assets"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    batch_id: Mapped[int] = mapped_column(ForeignKey("batches.id"), index=True)
+    name: Mapped[str] = mapped_column(String)
+    source_png: Mapped[str] = mapped_column(String)
+    raw_svg: Mapped[str] = mapped_column(Text)
+    norm_svg: Mapped[str] = mapped_column(Text, default="")
+    flat_svg: Mapped[str] = mapped_column(Text, default="")
+    # provenance: which stage produced what, and the parameters that made it.
+    meta: Mapped[dict] = mapped_column(JSON, default=dict)
+    gate: Mapped[dict] = mapped_column(JSON, default=dict)
+    verdict: Mapped[str] = mapped_column(String, default="UNVERIFIED", index=True)
+    approval: Mapped[str] = mapped_column(String, default="pending")
+
+    batch: Mapped[Batch] = relationship(back_populates="assets")

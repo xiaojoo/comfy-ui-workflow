@@ -21,3 +21,10 @@ icon-pipeline/workflows/3d_d0gear.json
 
 .DS_Store
 Thumbs.db
+
+# spent one-off probes, kept on disk only
+icon-pipeline/_dbg_*.py
+server/.venv/
+*.sqlite3
+
+server/pip_install.log

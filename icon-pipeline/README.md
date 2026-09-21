@@ -42,7 +42,12 @@ $PY tools/synth_icons.py brand-kit.example.json run/gt   # 重建真值测试图
 - **形状保真**：先按内容外接框配准（`crop_to_bbox_fill`），再算 chamfer / hausdorff p95 / alpha IoU / interior rmse / 16px SSIM。
 - **布局合规**：在交付画布自身坐标系里量 bbox 居中偏移、fill 占比、四角 alpha、forbidden 标签、路径/节点/色数预算。
 
-`--selftest` 用 6 种定向扰动断言：每个扰动**只**推动它那一轴的指标，其他轴必须不动。当前两个资产上 16/16 全绿、轴正交。
+`--selftest` 用 6 种定向扰动断言：每个扰动**只**推动它那一轴的指标，其他轴必须不动。
+在 8 个真图标的**交付件**（`*_flat.svg`）上 15/15 全绿，8/8 一致。
+
+只在交付件阶段有效：raw vtracer 输出本身离色板 ΔE 50–87，此时 `color_drift`（RGB 各 +9）
+把颜色推向最近的色板 token，`max_delta_e` 反而**下降**（实测 bell 86.84→85.18），
+"扰动只能变坏"的前提不成立。raw 阶段该断言稳定为 14/15，属预期而非尺子失效。
 
 ## 已在真图上的实测（4 张满幅模型出图，非图标域）
 

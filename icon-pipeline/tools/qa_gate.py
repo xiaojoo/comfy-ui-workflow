@@ -303,19 +303,21 @@ def perturb(svg, kind):
     if kind == "wobble":
         # Real shape damage: a crinkled outline, at the amplitude a reviewer
         # would actually reject -- milder jitter moves the metrics less than the
-        # "worth rejecting" tolerance, and correctly does not trip the gate. The offset sequence must not be
-        # a multiple of the 2-number point stride, or the jitter degenerates into
-        # an alternating shear that bbox-registration absorbs.
+        # "worth rejecting" tolerance, and correctly does not trip the gate.
+        # The counter is document-wide on purpose: resetting it per command hands
+        # every command the same offsets, turning the jitter into a rigid
+        # translation that bbox-registration erases -- the same trap as an
+        # offset sequence whose period aligns with the point stride.
+        state = {"i": 0}
+
+        def rep(mm):
+            i = state["i"]
+            state["i"] += 1
+            frac = ((i * 2654435761) % 997) / 997.0
+            return f"{float(mm.group(0)) + (frac - 0.5) * 40:.2f}"
+
         def per_cmd(m):
             cmd, body = m.group(1), m.group(2)
-            state = {"i": 0}
-
-            def rep(mm):
-                i = state["i"]
-                state["i"] += 1
-                frac = ((i * 2654435761) % 997) / 997.0
-                return f"{float(mm.group(0)) + (frac - 0.5) * 40:.2f}"
-
             return cmd + (NUM_RE.sub(rep, body) if cmd != "Z" else body)
 
         return re.sub(r"\bd=\"([^\"]*)\"",
@@ -343,6 +345,30 @@ TOL = {"max_delta_e": 0.3, "chamfer_grid_px": 0.005, "hausdorff_p95_grid_px": 0.
        "bbox_center_offset_pct": 0.2, "fill_ratio": 0.005, "forbidden_count": 0.5}
 
 
+# Each variant must move its own axis and must NOT move the others -- a gate where
+# every knob moves every metric cannot tell you what to fix. Module-level so the
+# CLI and the server assert against one shared list rather than two drifting ones.
+CHECKS = [
+    ("color_drift", "max_delta_e", "up", "palette"),
+    ("color_drift", "chamfer_grid_px", "same", "shape"),
+    ("wobble", "chamfer_grid_px", "up", "shape"),
+    ("wobble", "hausdorff_p95_grid_px", "up", "shape"),
+    ("wobble", "alpha_iou", "down", "shape"),
+    ("wobble", "max_delta_e", "same", "palette"),
+    ("chip", "paths", "down", "shape"),
+    # no alpha_iou check for chip: in a stacked SVG a dropped layer gets
+    # back-filled by the layer beneath, so the silhouette can survive it.
+    ("chip", "thumb_ssim_16", "down", "shape"),
+    ("nudge", "bbox_center_offset_pct", "up", "framing"),
+    ("nudge", "chamfer_grid_px", "same", "shape"),
+    ("nudge", "alpha_iou", "same", "shape"),
+    ("inflate", "fill_ratio", "up", "framing"),
+    ("inflate", "chamfer_grid_px", "same", "shape"),
+    ("gradient", "forbidden_count", "up", "syntax"),
+    ("gradient", "chamfer_grid_px", "same", "shape"),
+]
+
+
 def _val(r, key):
     return len(r["forbidden"]) if key == "forbidden_count" else r[key]
 
@@ -361,27 +387,8 @@ def selftest(source, svg_text, budget, palette):
 
     # Each variant must move its own axis, and must NOT move the other axes --
     # a gate where every knob moves every metric cannot tell you what to fix.
-    checks = [
-        ("color_drift", "max_delta_e", "up", "palette"),
-        ("color_drift", "chamfer_grid_px", "same", "shape"),
-        ("wobble", "chamfer_grid_px", "up", "shape"),
-        ("wobble", "hausdorff_p95_grid_px", "up", "shape"),
-        ("wobble", "alpha_iou", "down", "shape"),
-        ("wobble", "max_delta_e", "same", "palette"),
-        ("chip", "paths", "down", "shape"),
-        # no alpha_iou check for chip: in a stacked SVG a dropped layer gets
-        # back-filled by the layer beneath, so the silhouette can survive it.
-        ("chip", "thumb_ssim_16", "down", "shape"),
-        ("nudge", "bbox_center_offset_pct", "up", "framing"),
-        ("nudge", "chamfer_grid_px", "same", "shape"),
-        ("nudge", "alpha_iou", "same", "shape"),
-        ("inflate", "fill_ratio", "up", "framing"),
-        ("inflate", "chamfer_grid_px", "same", "shape"),
-        ("gradient", "forbidden_count", "up", "syntax"),
-        ("gradient", "chamfer_grid_px", "same", "shape"),
-    ]
     ok = True
-    for kind, key, expect, axis in checks:
+    for kind, key, expect, axis in CHECKS:
         b, v = _val(res["clean"], key), _val(res[kind], key)
         tol = TOL.get(key, 0.0)
         if expect == "up":
