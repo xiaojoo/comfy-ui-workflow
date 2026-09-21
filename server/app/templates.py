@@ -124,6 +124,9 @@ TEMPLATES = [
                      "sampler": "euler", "scheduler": "simple", "denoise": 1.0},
         "verified": True, "model": "Wan 2.1 T2V 1.3B", "model_en": "Wan 2.1 T2V 1.3B",
         "spec": "832×480 · 33帧", "media": "video",
+        # Long clips outrun the 900 s default and get recorded as TIMEOUT while the
+        # engine is still sampling. Sized for the measured long end of the ladder.
+        "timeout": 2700,
     },
     {
         "id": "hunyuan3d", "graph": "3d_d0_chain.json", "category": "enterprise_icon",

@@ -71,6 +71,22 @@ def test_api_table_matches_cli(tmp_path):
         assert g["summary"].endswith("PASS") or g["summary"].endswith("FAIL")
 
 
+def test_cancel_reports_the_truth_not_a_lie():
+    """Guards a bug that survived two guesses at the same API.
+
+    DELETE /queue is a 405 on this engine and {"prompt_id": ...} removes nothing;
+    both looked like success while a swallowed exception left the job running. So
+    the contract under test is the return value: it must never claim a removal it
+    did not perform. Cheap -- no prompt runs.
+    """
+    from app import comfy
+    if not comfy.alive():
+        pytest.skip("ComfyUI not running")
+    verdict = comfy.cancel("00000000-0000-0000-0000-000000000000")
+    assert "failed" not in verdict, f"cancel could not talk to the queue: {verdict}"
+    assert verdict in ("removed from queue", "not running", "interrupted"), verdict
+
+
 def test_cell_checks_cannot_contradict_the_verdict():
     """The viewer colours cells from row.checks, so a false check must mean FAIL.
 

@@ -60,6 +60,45 @@ def collect(pid, timeout=900):
     return status, run_graph.saved_files(outputs), secs
 
 
+def running_ids():
+    q = _get("/queue")
+    return [item[1] for item in q.get("queue_running", [])]
+
+
+def queued_ids():
+    q = _get("/queue")
+    return [item[1] for item in q.get("queue_pending", [])]
+
+
+def cancel(pid):
+    """Drop a job we have stopped waiting for.
+
+    Without this the engine keeps burning the GPU on a task the API already
+    reported as failed, and the next submission silently queues behind it.
+
+    This engine rejects DELETE /queue with a 405; removal is POST /queue with a
+    {"delete": [id]} body. Verified against the live queue, because the first two
+    guesses here both returned without deleting anything -- so nothing is swallowed:
+    the return value says which outcome actually happened.
+    """
+    try:
+        req = urllib.request.Request(f"{COMFY}/queue", data=json.dumps({"delete": [pid]}).encode(),
+                                     headers={"Content-Type": "application/json"}, method="POST")
+        urllib.request.urlopen(req, timeout=15).read()
+    except Exception as e:
+        return f"queue delete failed ({type(e).__name__})"
+    if pid in queued_ids():
+        return "still queued"
+    if pid in running_ids():
+        try:
+            urllib.request.urlopen(urllib.request.Request(f"{COMFY}/interrupt", data=b"{}", method="POST"),
+                                   timeout=15).read()
+            return "interrupted"
+        except Exception as e:
+            return f"interrupt failed ({type(e).__name__})"
+    return "removed from queue"
+
+
 def alive():
     try:
         _get("/system_stats")

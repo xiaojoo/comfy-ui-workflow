@@ -16,10 +16,14 @@ const shown = computed(() => props.tasks.filter((x) => {
   return x.state === 'done'
 }))
 
+// Rendered from whichever keys this task actually carries: an image run has no
+// length and a video run has no batch, and a fixed template showed "undefined步"
+// for one of the two.
+const UNITS = { width: 'w', height: 'h', steps: '步', cfg: 'cfg', seed: 'seed', batch: '张', length: '帧', fps: 'fps', octree: 'oct' }
 function params(x) {
   const p = x.params || {}
-  if (!p.width) return '—'
-  return `${p.width}×${p.height} / ${p.steps}步`
+  if (p.width && p.height) return `${p.width}×${p.height} · ${p.steps ?? '?'}步` + (p.length ? ` · ${p.length}帧` : '')
+  return Object.keys(p).map((k) => `${UNITS[k] || k}=${p[k]}`).join(' ') || '—'
 }
 function stamp(iso) {
   return iso ? new Date(iso + 'Z').toLocaleString([], { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }) : '—'

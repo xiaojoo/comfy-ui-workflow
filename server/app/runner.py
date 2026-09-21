@@ -93,7 +93,13 @@ class Runner:
                 s.get(Task, task_id).comfy_id = pid
                 s.commit()
             log = stage(55, f"排队与采样中 · prompt {pid[:8]}", log)
-            status, files, secs = comfy.collect(pid)
+            status, files, secs = comfy.collect(pid, timeout=tpl.get("timeout", 900))
+            if status == "TIMEOUT":
+                # Stop it rather than abandon it, and say how long we waited -- "TIMEOUT"
+                # alone reads like a UI bug while the engine is still working.
+                where = comfy.cancel(pid)
+                raise RuntimeError(f"still running after {tpl.get('timeout', 900)}s, engine job {where}. "
+                                   f"This clip is probably beyond the 20-minute budget.")
             if status != "success":
                 raise RuntimeError(f"{status}")
             log = stage(90, f"生成完成 · {secs:.1f}s · {len(files)} 个文件", log)

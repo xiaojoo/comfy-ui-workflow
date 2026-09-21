@@ -252,9 +252,9 @@ def _task_row(t, full=False):
            "state": t.state, "progress": t.progress, "error": t.error,
            "favorite": t.favorite, "seconds": t.seconds,
            "created_at": t.created_at, "finished_at": t.finished_at,
-           "params": {"width": t.params.get("width"), "height": t.params.get("height"),
-                      "steps": t.params.get("steps"), "cfg": t.params.get("cfg"),
-                      "seed": t.params.get("seed"), "batch": t.params.get("batch")}}
+           "params": {k: t.params.get(k) for k in
+                      ("width", "height", "steps", "cfg", "seed", "batch", "length", "fps", "octree")
+                      if t.params.get(k) is not None}}
     if full:
         # The single-task view carries the whole parameter set: the form restores
         # itself from it, and a summary missing unet/clip would blank the model select.
