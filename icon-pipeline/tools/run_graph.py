@@ -20,6 +20,42 @@ def stats():
     return json.loads(urllib.request.urlopen(f"{SERVER}/system_stats", timeout=30).read())["devices"][0]
 
 
+def _get(url):
+    return json.loads(urllib.request.urlopen(url, timeout=30).read())
+
+
+def wait(pid, timeout=900, poll=1.0):
+    """Block until ComfyUI reports the prompt, and return (status, outputs, seconds).
+
+    status carries the execution_error message when there is one, because
+    status_str alone says only 'error' and the caller has to show a reason.
+    """
+    t0 = time.time()
+    while True:
+        h = _get(f"{SERVER}/history/{pid}")
+        if pid in h:
+            st = h[pid].get("status", {}).get("status_str", "?")
+            for m in (h[pid].get("status", {}).get("messages") or []):
+                if m[0] == "execution_error":
+                    st += ": " + str(m[1].get("exception_message", ""))[:200]
+            return st, h[pid].get("outputs", {}), time.time() - t0
+        if time.time() - t0 > timeout:
+            return "TIMEOUT", {}, time.time() - t0
+        time.sleep(poll)
+
+
+def saved_files(outputs):
+    """Every image/glb node wrote, as {subfolder, filename} for the /view endpoint."""
+    out = []
+    for nid in sorted(outputs, key=lambda n: int(n) if n.isdigit() else 0):
+        for kind, items in outputs[nid].items():
+            for it in (items or []):
+                if isinstance(it, dict) and "filename" in it:
+                    out.append({"kind": kind, "node": nid, "subfolder": it.get("subfolder", ""),
+                                "filename": it["filename"], "type": it.get("type", "output")})
+    return out
+
+
 def main():
     graph = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
     client = "p0-runner"
@@ -31,26 +67,15 @@ def main():
         sys.exit(1)
     pid = r["prompt_id"]
     print("queued", pid)
-    err = None
-    while True:
-        h = json.loads(urllib.request.urlopen(f"{SERVER}/history/{pid}", timeout=30).read())
-        if pid in h:
-            err = h[pid].get("status", {}).get("status_str")
-            break
-        if time.time() - t0 > 600:
-            print("TIMEOUT")
-            sys.exit(1)
-        time.sleep(1.0)
-    dur = time.time() - t0
+    err, out, dur = wait(pid)
     after = stats()
     print(f"elapsed {dur:.1f}s  status={err}")
     print(f"vram free before {before['vram_free']/2**20:.0f}MiB  after {after['vram_free']/2**20:.0f}MiB")
-    out = h[pid].get("outputs", {})
-    for nid in sorted(out, key=int):
-        for kind, items in out[nid].items():
-            for it in items:
-                p = it.get("subfolder", "") + "/" if it.get("subfolder") else ""
-                print(f"  node{nid} {kind}: {p}{it.get('filename')} {it.get('type')}")
+    for f in saved_files(out):
+        p = f["subfolder"] + "/" if f["subfolder"] else ""
+        print(f"  node{f['node']} {f['kind']}: {p}{f['filename']} {f['type']}")
+    if err != "success":
+        sys.exit(1)
 
 
 if __name__ == "__main__":

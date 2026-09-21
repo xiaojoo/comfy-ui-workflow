@@ -18,6 +18,12 @@ async function req(method, url, body) {
 
 export const api = {
   health: () => req('GET', '/health'),
+  models: () => req('GET', '/models'),
+  templates: () => req('GET', '/templates'),
+  tasks: (limit = 20) => req('GET', `/tasks?limit=${limit}`),
+  task: (id) => req('GET', `/tasks/${id}`),
+  createTask: (body) => req('POST', '/tasks', body),
+  favorite: (id, favorite) => req('POST', `/tasks/${id}/favorite`, { favorite }),
   batches: (limit = 50) => req('GET', `/batches?limit=${limit}`),
   batch: (id) => req('GET', `/batches/${id}`),
   gate: (id) => req('GET', `/batches/${id}/gate`),

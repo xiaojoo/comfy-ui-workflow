@@ -12,6 +12,7 @@ REPO = Path(__file__).resolve().parents[2]
 PIPELINE = REPO / "icon-pipeline"
 TOOLS = PIPELINE / "tools"
 FIXTURES = PIPELINE / "fixtures"
+WORKFLOWS = PIPELINE / "workflows"
 BRAND_KIT = Path(os.environ.get("BRAND_KIT", PIPELINE / "brand-kit.example.json"))
 
 COMFY = os.environ.get("COMFY_URL", "http://127.0.0.1:8188")

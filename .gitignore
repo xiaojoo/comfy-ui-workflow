@@ -28,6 +28,8 @@ server/.venv/
 *.sqlite3
 
 server/pip_install.log
+server/uv.log
+server/work/
 
 web/node_modules/
 web/dist/

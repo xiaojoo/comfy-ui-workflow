@@ -33,6 +33,35 @@ class Batch(Base):
     assets: Mapped[list["Asset"]] = relationship(back_populates="batch", cascade="all, delete-orphan")
 
 
+class Task(Base):
+    """One generation run: a template, its parameters, and what ComfyUI wrote back.
+
+    Separate from Batch on purpose. A Task is "ask the model for pictures"; a Batch
+    is "gate these deliverables". The two join when a generated image is sent
+    through the gate, which is the point of the pipeline but not a step every task takes.
+    """
+
+    __tablename__ = "tasks"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    # Derived from the row id, so it is only knowable after the first insert.
+    ref: Mapped[str | None] = mapped_column(String, unique=True, index=True)
+    template: Mapped[str] = mapped_column(String)
+    title: Mapped[str] = mapped_column(String, default="")
+    model: Mapped[str] = mapped_column(String, default="")
+    params: Mapped[dict] = mapped_column(JSON, default=dict)
+    state: Mapped[str] = mapped_column(String, default="queued", index=True)
+    progress: Mapped[int] = mapped_column(Integer, default=0)
+    log: Mapped[list] = mapped_column(JSON, default=list)
+    comfy_id: Mapped[str | None] = mapped_column(String)
+    error: Mapped[str | None] = mapped_column(Text)
+    outputs: Mapped[list] = mapped_column(JSON, default=list)
+    favorite: Mapped[bool] = mapped_column(default=False)
+    seconds: Mapped[float | None] = mapped_column()
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=now)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime)
+
+
 class Asset(Base):
     __tablename__ = "assets"
 

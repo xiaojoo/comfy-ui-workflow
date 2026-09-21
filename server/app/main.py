@@ -8,17 +8,18 @@ must refuse to serve rather than hand out confident-looking PASSes.
 
 import json
 from contextlib import asynccontextmanager
+from datetime import datetime, timezone
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Query
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import select
 
-from . import gates, runner
+from . import comfy, gates, runner, templates
 from .config import FIXTURES
 from .db import init_db
 from .gates import Kit
-from .models import Asset, Batch
+from .models import Asset, Batch, Task
 from .db import Session
 
 RULER_FIXTURES = [("gear_gt.png", "gear.svg"), ("shield_gt.png", "shield.svg")]
@@ -164,3 +165,93 @@ def svg_of(batch_id: int, asset_id: int, stage: str = "flat"):
         if text is None:
             raise HTTPException(400, f"stage must be raw|norm|flat, got {stage}")
         return {"name": a.name, "stage": stage, "svg": text}
+
+
+# ---------------------------------------------------------------- studio surface
+
+class TaskIn(BaseModel):
+    template: str
+    prompt: str = Field(min_length=1, max_length=2000)
+    params: dict = Field(default_factory=dict)
+
+
+@app.get("/models")
+def models():
+    """What the live engine can load. Names come from ComfyUI, never from a list here."""
+    return {"catalog": comfy.catalog(), "engine": comfy.engine(), "storage": comfy.storage()}
+
+
+@app.get("/templates")
+def template_list():
+    return {"templates": templates.public()}
+
+
+@app.post("/tasks", status_code=202)
+def create_task(body: TaskIn):
+    tpl = templates.BY_ID.get(body.template)
+    if tpl is None:
+        raise HTTPException(422, f"unknown template {body.template!r}")
+    params = {**tpl["defaults"], **body.params, "prompt": body.prompt}
+    params["prefix"] = f"studio/{body.template}"
+    with Session() as s:
+        t = Task(template=body.template, title=body.prompt[:60], model=tpl["model"],
+                 params=params, state="queued")
+        s.add(t)
+        s.commit()
+        tid = t.id
+        # The readable id is derived from the row id so it cannot collide, and the
+        # queue position a caller sees is this task's, not the engine's.
+        t.ref = f"task_{datetime.now(timezone.utc):%Y%m%d}_{tid:03d}"
+        s.commit()
+        ref = t.ref
+    pos = runner.runner.submit_task(tid)
+    return {"task_id": tid, "ref": ref, "queue_position": pos}
+
+
+@app.get("/tasks")
+def list_tasks(limit: int = Query(default=20, ge=1, le=200)):
+    with Session() as s:
+        rows = s.scalars(select(Task).order_by(Task.id.desc()).limit(limit)).all()
+        return {"tasks": [_task_row(t) for t in rows]}
+
+
+@app.get("/tasks/{task_id}")
+def get_task(task_id: int):
+    with Session() as s:
+        t = s.get(Task, task_id)
+        if t is None:
+            raise HTTPException(404, "no such task")
+        return _task_row(t, full=True)
+
+
+class Favorite(BaseModel):
+    favorite: bool
+
+
+@app.post("/tasks/{task_id}/favorite")
+def favorite(task_id: int, body: Favorite):
+    with Session() as s:
+        t = s.get(Task, task_id)
+        if t is None:
+            raise HTTPException(404, "no such task")
+        t.favorite = body.favorite
+        s.commit()
+        return {"id": t.id, "favorite": t.favorite}
+
+
+def _task_row(t, full=False):
+    row = {"id": t.id, "ref": t.ref, "template": t.template, "title": t.title, "model": t.model,
+           "state": t.state, "progress": t.progress, "error": t.error,
+           "favorite": t.favorite, "seconds": t.seconds,
+           "created_at": t.created_at, "finished_at": t.finished_at,
+           "params": {"width": t.params.get("width"), "height": t.params.get("height"),
+                      "steps": t.params.get("steps"), "cfg": t.params.get("cfg"),
+                      "seed": t.params.get("seed"), "batch": t.params.get("batch")}}
+    if full:
+        # The single-task view carries the whole parameter set: the form restores
+        # itself from it, and a summary missing unet/clip would blank the model select.
+        row["params"] = t.params
+        row["outputs"] = t.outputs
+        row["log"] = t.log
+        row["comfy_id"] = t.comfy_id
+    return row

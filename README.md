@@ -12,8 +12,11 @@
 - **3D 线** Hunyuan3D 2.1 图生 GLB（25s）+ 降面/焊接/补洞/UV 后处理链。
 - **度量本身经过校准**：合成真值图标（6 个）与解析真值球体先验证尺子能分辨，
   再拿去量模型产物。门禁自检断言 6 种定向扰动各自只推动本轴指标、其他轴不动。
-- **`server/` + `web/`**：FastAPI + SQLite 批次队列 + Vue3 看板。门禁表的列、阈值、
-  逐格是否超预算全部由后端下发，前端不自行推导第二把尺子；启动即重跑尺子自检，尺子瞎了拒绝服务。
+- **`server/` + `web/`**：FastAPI + SQLite 的批次队列、生成任务与 Vue3 界面。
+  门禁表的列、阈值、逐格是否超预算全部由后端下发，前端不自行推导第二把尺子；
+  启动即重跑尺子自检，尺子瞎了拒绝服务。
+- **生成已接到引擎**：首页的三步向导真调 ComfyUI（Z-Image Turbo int8 + Qwen-3-4B fp8），
+  模型下拉读的是引擎实时 `/object_info`，不是写死的清单。
 
 细节、实测数字和已知缺点见 [icon-pipeline/README.md](icon-pipeline/README.md)。
 
@@ -32,7 +35,7 @@ bash tools/run_d0.sh                                   # 抠图→纯色背景�
 
 ```bash
 cd server && .venv/Scripts/python.exe -m uvicorn app.main:app --port 8191   # 后端
-cd web && npm install && npm run dev                                        # 看板 http://localhost:5180
+cd web && npm install && npm run dev                                        # 界面 http://localhost:5180
 cd server && .venv/Scripts/python.exe -m pytest tests -q                    # 5 项验收
 ```
 
@@ -42,6 +45,14 @@ cd server && .venv/Scripts/python.exe -m pytest tests -q                    # 5 
 ## 已知缺点
 
 - `path_nodes` 预算未达成，且已证伪三条后处理路径（详见 icon-pipeline/README）。
+- 首页只交付了设计稿那一屏：生成、模板、参数、预览、执行日志、最近任务、存储条是真的；
+  左侧另外 8 个导航项是显式「未实现」页，不摆假数据。
+- 生成与门禁在界面上还是两次动作，没串成「生成→抠图→矢量化→门禁」一键。
+- 模板只有 3 个。设计稿的 6 类里我们只有企业图标这一条实测链路；
+  人像写真/电商主图/产品海报既无工作流也无门禁标准，且环境里没有 SDXL。
+- 生成耗时冷热差一个量级：稳定态 3 张 1024×1024 实测 4.0–4.1s（显存稳定 ~3.1GB 空闲），
+  但紧跟后端重启的那两次是 66.5s 和 160.2s。离群值未定位，最像是 11GiB 权重重新读盘
+  （WSL 无 swap），没有证据就不写进结论。
 - 看板不显示源图对照：后端只提供 SVG 端点，没有栅格图端点。
 - 无鉴权，且 `POST /batches` 会按提交的路径读取后端可读文件、再经 `/svg` 回传。
   单机自用可接受，给多人用之前必须先加允许目录白名单。
