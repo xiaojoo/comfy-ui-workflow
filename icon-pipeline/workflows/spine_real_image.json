@@ -1,0 +1,29 @@
+{
+  "1": {"class_type": "LoadImage", "inputs": {"image": "IMAGE_NAME", "upload": "image"}},
+  "2": {"class_type": "AutoDownloadBiRefNetModel", "inputs": {"model_name": "General", "device": "AUTO", "dtype": "float16"}},
+  "3": {"class_type": "RembgByBiRefNetAdvanced", "inputs": {
+      "model": ["2", 0], "images": ["1", 0],
+      "width": 1024, "height": 1024, "upscale_method": "bilinear",
+      "blur_size": 90, "blur_size_two": 6, "fill_color": false, "color": 0, "mask_threshold": 0.0}},
+
+  "30": {"class_type": "ImageScale", "inputs": {"image": ["3", 0], "upscale_method": "lanczos", "width": 512, "height": 512, "crop": "center"}},
+  "10": {"class_type": "TS_ImageToSVGStringColor_Vtracer", "inputs": {
+      "image": ["30", 0], "hierarchical": "stacked", "mode": "polygon",
+      "filter_speckle": 4, "color_precision": 6, "layer_difference": 16,
+      "corner_threshold": 60, "length_threshold": 4.0, "max_iterations": 10,
+      "splice_threshold": 45, "path_precision": 2}},
+  "11": {"class_type": "TS_SaveSVGString", "inputs": {
+      "SVG_String": ["10", 0], "filename_prefix": "PREFIX/raw", "append_timestamp": false}},
+
+  "31": {"class_type": "SaveImage", "inputs": {"images": ["30", 0], "filename_prefix": "PREFIX/src"}},
+
+  "40": {"class_type": "UpscaleModelLoader", "inputs": {"model_name": "4x-UltraSharp.pth"}},
+  "41": {"class_type": "SplitImageWithAlpha", "inputs": {"image": ["3", 0]}},
+  "42": {"class_type": "ImageUpscaleWithModel", "inputs": {"upscale_model": ["40", 0], "image": ["41", 0]}},
+  "43": {"class_type": "MaskToImage", "inputs": {"mask": ["41", 1]}},
+  "44": {"class_type": "ImageScaleBy", "inputs": {"image": ["43", 0], "upscale_method": "lanczos", "scale_by": 4.0}},
+  "45": {"class_type": "ImageToMask", "inputs": {"image": ["44", 0], "channel": "red"}},
+  "46": {"class_type": "JoinImageWithAlpha", "inputs": {"image": ["42", 0], "alpha": ["45", 0]}},
+  "47": {"class_type": "ImageScale", "inputs": {"image": ["46", 0], "upscale_method": "lanczos", "width": 192, "height": 192, "crop": "center"}},
+  "48": {"class_type": "SaveImage", "inputs": {"images": ["47", 0], "filename_prefix": "PREFIX/png192"}}
+}

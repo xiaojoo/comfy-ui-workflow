@@ -1,0 +1,32 @@
+{
+  "1": {"class_type": "ImageOnlyCheckpointLoader", "inputs": {"ckpt_name": "hunyuan_3d_v2.1.safetensors"}},
+  "2": {"class_type": "LoadImage", "inputs": {"image": "test.jpg", "upload": "image"}},
+
+  "10": {"class_type": "AutoDownloadBiRefNetModel", "inputs": {"model_name": "General", "device": "AUTO", "dtype": "float16"}},
+  "11": {"class_type": "RembgByBiRefNetAdvanced", "inputs": {
+      "model": ["10", 0], "images": ["2", 0],
+      "width": 1024, "height": 1024, "upscale_method": "bilinear",
+      "blur_size": 90, "blur_size_two": 6, "fill_color": false, "color": 0, "mask_threshold": 0.0}},
+  "12": {"class_type": "SplitImageWithAlpha", "inputs": {"image": ["11", 0]}},
+  "13": {"class_type": "EmptyImage", "inputs": {"width": 1024, "height": 1024, "batch_size": 1, "color": 16119285}},
+  "14": {"class_type": "ImageCompositeMasked", "inputs": {
+      "destination": ["13", 0], "source": ["12", 0], "mask": ["12", 1],
+      "x": 0, "y": 0, "resize_source": true}},
+  "15": {"class_type": "SaveImage", "inputs": {"images": ["14", 0], "filename_prefix": "d0/INPUT"}},
+
+  "20": {"class_type": "CLIPVisionEncode", "inputs": {"clip_vision": ["1", 1], "image": ["14", 0], "crop": "center"}},
+  "21": {"class_type": "Hunyuan3Dv2Conditioning", "inputs": {"clip_vision_output": ["20", 0]}},
+  "22": {"class_type": "ModelSamplingAuraFlow", "inputs": {"model": ["1", 0], "shift": 1}},
+  "23": {"class_type": "EmptyLatentHunyuan3Dv2", "inputs": {"resolution": 4096, "batch_size": 1}},
+  "24": {"class_type": "KSampler", "inputs": {
+      "model": ["22", 0], "positive": ["21", 0], "negative": ["21", 1], "latent_image": ["23", 0],
+      "seed": 1108207273232038, "control_after_generate": "fixed", "steps": 30, "cfg": 5.0,
+      "sampler_name": "euler", "scheduler": "normal", "denoise": 1.0}},
+  "25": {"class_type": "VAEDecodeHunyuan3D", "inputs": {"samples": ["24", 0], "vae": ["1", 2], "num_chunks": 8000, "octree_resolution": 192}},
+  "26": {"class_type": "VoxelToMesh", "inputs": {"voxel": ["25", 0], "algorithm": "surface net", "threshold": 0.6}},
+  "27": {"class_type": "SaveGLB", "inputs": {"mesh": ["26", 0], "filename_prefix": "d0/raw"}},
+  "28": {"class_type": "RenderMesh", "inputs": {"mesh": ["26", 0], "mode": "solid", "width": 512, "height": 512, "background": "#000000"}},
+  "29": {"class_type": "SaveImage", "inputs": {"images": ["28", 0], "filename_prefix": "d0/render"}},
+  "30": {"class_type": "MaskToImage", "inputs": {"mask": ["28", 1]}},
+  "31": {"class_type": "SaveImage", "inputs": {"images": ["30", 0], "filename_prefix": "d0/mask"}}
+}

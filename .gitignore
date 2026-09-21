@@ -1,0 +1,23 @@
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Scratch measurements and generated assets -- all reproducible from tools/.
+# Conclusions live in README.md; raw tables here are not evidence, they are noise.
+.probe/
+icon-pipeline/run/
+run_tail.txt
+
+# Generated workflow variants (authored templates stay tracked).
+icon-pipeline/workflows/3d_oct*.json
+icon-pipeline/workflows/3d_clean_*.json
+icon-pipeline/workflows/3d_probe_*.json
+icon-pipeline/workflows/3d_*seedfix.json
+icon-pipeline/workflows/3d_stage_probe.json
+icon-pipeline/workflows/3d_cold_probe.json
+icon-pipeline/workflows/3d_d0cat.json
+icon-pipeline/workflows/3d_d0gear.json
+
+.DS_Store
+Thumbs.db

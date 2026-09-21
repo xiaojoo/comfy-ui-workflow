@@ -1,0 +1,22 @@
+{
+  "1": {"class_type": "LoadImage", "inputs": {"image": "example.png", "upload": "image"}},
+  "2": {"class_type": "AutoDownloadBiRefNetModel", "inputs": {"model_name": "General", "device": "AUTO", "dtype": "float32"}},
+  "3": {"class_type": "RembgByBiRefNetAdvanced", "inputs": {
+      "model": ["2", 0], "images": ["1", 0],
+      "width": 1024, "height": 1024, "upscale_method": "bilinear",
+      "blur_size": 90, "blur_size_two": 6, "fill_color": false, "color": 0, "mask_threshold": 0.0}},
+
+  "4": {"class_type": "UpscaleModelLoader", "inputs": {"model_name": "4x-UltraSharp.pth"}},
+  "5": {"class_type": "SplitImageWithAlpha", "inputs": {"image": ["3", 0]}},
+  "6": {"class_type": "ImageUpscaleWithModel", "inputs": {"upscale_model": ["4", 0], "image": ["5", 0]}},
+  "7": {"class_type": "MaskToImage", "inputs": {"mask": ["5", 1]}},
+  "8": {"class_type": "ImageScaleBy", "inputs": {"image": ["7", 0], "upscale_method": "lanczos", "scale_by": 4.0}},
+  "9": {"class_type": "ImageToMask", "inputs": {"image": ["8", 0], "channel": "red"}},
+  "10": {"class_type": "JoinImageWithAlpha", "inputs": {"image": ["6", 0], "alpha": ["9", 0]}},
+  "11": {"class_type": "ImageScale", "inputs": {"image": ["10", 0], "upscale_method": "lanczos", "width": 512, "height": 512, "crop": "center"}},
+  "12": {"class_type": "SaveImage", "inputs": {"images": ["11", 0], "filename_prefix": "p0test/up4x_rgba"}},
+
+  "20": {"class_type": "SaveImage", "inputs": {"images": ["3", 0], "filename_prefix": "p0test/rgba"}},
+  "21": {"class_type": "MaskToImage", "inputs": {"mask": ["3", 1]}},
+  "22": {"class_type": "SaveImage", "inputs": {"images": ["21", 0], "filename_prefix": "p0test/mask"}}
+}

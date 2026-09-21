@@ -1,0 +1,29 @@
+{
+  "name": "acme-console",
+  "grid": 24,
+  "canvas_ratio": 1.0,
+  "optical_fill": 0.88,
+  "deliverable_sizes": [16, 20, 24, 32, 48, 64, 96, 192],
+  "budget": {
+    "max_paths": 16,
+    "max_path_nodes": 260,
+    "max_colors": 4,
+    "max_delta_e": 3.0,
+    "min_alpha_iou": 0.97,
+    "max_chamfer_grid_px": 0.12,
+    "max_hausdorff_grid_px": 0.9,
+    "max_interior_rmse": 10.0,
+    "min_thumb_ssim_16": 0.95,
+    "max_bbox_offset_pct": 2.0,
+    "max_fill_deviation": 0.04
+  },
+  "forbidden_in_svg": ["linearGradient", "radialGradient", "filter", "image", "clipPath", "mask", "foreignObject"],
+  "palette": {
+    "brand/primary": "#1E88E5",
+    "brand/primary-dark": "#1565C0",
+    "brand/accent": "#FF7043",
+    "brand/neutral": "#37474F",
+    "brand/success": "#43A047",
+    "surface/white": "#FFFFFF"
+  }
+}

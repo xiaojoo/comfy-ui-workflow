@@ -1,0 +1,25 @@
+{
+  "1": {"class_type": "ImageOnlyCheckpointLoader", "inputs": {"ckpt_name": "hunyuan_3d_v2.1.safetensors"}},
+  "2": {"class_type": "LoadImage", "inputs": {"image": "test.jpg", "upload": "image"}},
+  "13": {"class_type": "CLIPVisionEncode", "inputs": {"clip_vision": ["1", 1], "image": ["2", 0], "crop": "center"}},
+  "6": {"class_type": "Hunyuan3Dv2Conditioning", "inputs": {"clip_vision_output": ["13", 0]}},
+  "3": {"class_type": "ModelSamplingAuraFlow", "inputs": {"model": ["1", 0], "shift": 1}},
+  "4": {"class_type": "EmptyLatentHunyuan3Dv2", "inputs": {"resolution": 4096, "batch_size": 1}},
+  "7": {"class_type": "KSampler", "inputs": {
+      "model": ["3", 0], "positive": ["6", 0], "negative": ["6", 1], "latent_image": ["4", 0],
+      "seed": 1108207273232038, "control_after_generate": "fixed", "steps": 30, "cfg": 5.0,
+      "sampler_name": "euler", "scheduler": "normal", "denoise": 1.0}},
+  "8": {"class_type": "VAEDecodeHunyuan3D", "inputs": {"samples": ["7", 0], "vae": ["1", 2], "num_chunks": 8000, "octree_resolution": 256}},
+  "9": {"class_type": "VoxelToMesh", "inputs": {"voxel": ["8", 0], "algorithm": "surface net", "threshold": 0.6}},
+  "20": {"class_type": "GetMeshInfo", "inputs": {"mesh": ["9", 0]}},
+
+  "21": {"class_type": "DecimateMesh", "inputs": {"mesh": ["9", 0], "target_face_count": 20000, "placement_mode": "midpoint"}},
+  "22": {"class_type": "WeldVertices", "inputs": {"mesh": ["21", 0], "epsilon_rel": 0.00001, "epsilon_abs": 0}},
+  "23": {"class_type": "FillHoles", "inputs": {"mesh": ["22", 0], "max_perimeter": 0.03, "weld_epsilon_rel": 0.00001, "max_vertices": 16, "fill_chains": false}},
+  "24": {"class_type": "MeshSmoothNormals", "inputs": {"mesh": ["23", 0], "crease_angle": 45}},
+  "25": {"class_type": "UnwrapMesh", "inputs": {"mesh": ["24", 0], "segmenter": "pec", "resolution": 1024, "padding": 1, "weld_distance": 0}},
+  "26": {"class_type": "GetMeshInfo", "inputs": {"mesh": ["25", 0]}},
+  "27": {"class_type": "SaveGLB", "inputs": {"mesh": ["25", 0], "filename_prefix": "agent3d/post"}},
+  "28": {"class_type": "RenderMesh", "inputs": {"mesh": ["25", 0], "mode": "solid", "width": 512, "height": 512, "background": "#000000"}},
+  "29": {"class_type": "SaveImage", "inputs": {"images": ["28", 0], "filename_prefix": "agent3d/render"}}
+}
