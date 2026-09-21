@@ -53,7 +53,7 @@ function stamp(iso) {
           <tr>
             <th>{{ t.th.ref }}</th><th>{{ t.th.template }}</th><th>{{ t.th.model }}</th>
             <th>{{ t.th.params }}</th><th>{{ t.th.state }}</th><th>{{ t.th.created }}</th>
-            <th class="actions-col">{{ t.th.actions }}</th>
+            <th class="ops-col">{{ t.th.actions }}</th>
           </tr>
         </thead>
         <tbody>
@@ -64,7 +64,7 @@ function stamp(iso) {
             <td class="mono">{{ params(x) }}</td>
             <td><span class="chip" :class="x.state">{{ t.state[x.state] || x.state }}</span></td>
             <td class="mono">{{ stamp(x.created_at) }}</td>
-            <td class="actions"><button class="ghost sm" @click="emit('pick', x)">{{ t.view }}</button></td>
+            <td class="ops"><button class="ghost sm" @click="emit('pick', x)">{{ t.view }}</button></td>
           </tr>
         </tbody>
       </table>

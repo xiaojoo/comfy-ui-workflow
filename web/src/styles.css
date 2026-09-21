@@ -378,24 +378,27 @@ table.tasks { width: max-content; min-width: 100%; border-collapse: separate; bo
               font-variant-numeric: tabular-nums; }
 /* The five columns between the sticky pair take the leftover table width in proportion
    to their content; the two sticky ones refuse it. 1px plus the nowrap below is how a
-   column says "no" -- and the actions column needs its own floor, because 1px there was
+   column says "no" -- and the ops column needs its own floor, because 1px there was
    measured holding it at 40px while its button is 58px wide. Without this the stretch
-   smeared over all seven and padded 任务 ID to 218px and 操作 to 95px of dead space. */
+   smeared over all seven and padded 任务 ID to 218px and 操作 to 95px of dead space.
+   The class is .ops, not .actions: the gate board's global .actions { display: flex }
+   and .actions button { margin-right: 4px } were measured turning text-align: center
+   into a 9px/12px off-centre here. */
 table.tasks th:first-child, table.tasks td:first-child,
-table.tasks th.actions-col, table.tasks td.actions { width: 1px; }
-table.tasks th.actions-col, table.tasks td.actions { min-width: max-content; }
+table.tasks th.ops-col, table.tasks td.ops { width: 1px; }
+table.tasks th.ops-col, table.tasks td.ops { min-width: max-content; }
 table.tasks th, table.tasks td { text-align: left; padding: 7px 8px; border-bottom: 1px solid var(--line); font-size: 12px; }
 table.tasks th { color: var(--muted); font-weight: 500; font-size: 11px; text-transform: uppercase; letter-spacing: .04em; }
 table.tasks tr:hover td, table.tasks tr.on td { background: var(--panel-2); }
-/* Nothing here wraps: a narrow "查看" otherwise breaks one character per line, and a
-   wrappable column lets the filler squeeze it down to one glyph -- measured 33px on the
-   workflow names before this was made uniform. */
+/* Nothing here wraps: a narrow "查看" otherwise breaks one character per line, and one
+   wrappable column was measured collapsing to 33px -- a single glyph -- when it was the
+   only one allowed to wrap. */
 table.tasks th, table.tasks td { white-space: nowrap; }
 table.tasks th:first-child, table.tasks td:first-child { position: sticky; left: 0; z-index: 1; background: var(--panel); }
-table.tasks th.actions-col, table.tasks td.actions { position: sticky; right: 0; z-index: 1; text-align: center;
-                                                     background: var(--panel); border-left: 1px solid var(--line); }
-table.tasks tr:hover td:first-child, table.tasks tr:hover td.actions,
-table.tasks tr.on td:first-child, table.tasks tr.on td.actions { background: var(--panel-2); }
+table.tasks th.ops-col, table.tasks td.ops { position: sticky; right: 0; z-index: 1; text-align: center;
+                                             background: var(--panel); border-left: 1px solid var(--line); }
+table.tasks tr:hover td:first-child, table.tasks tr:hover td.ops,
+table.tasks tr.on td:first-child, table.tasks tr.on td.ops { background: var(--panel-2); }
 .mono { font-family: var(--mono); font-size: 11.5px; }
 .pager { display: flex; align-items: center; gap: 10px; margin-top: 12px; }
 .pager .hint { margin: 0; }
