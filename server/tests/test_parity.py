@@ -17,11 +17,8 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.config import FIXTURES, TOOLS
+from app.gates import COLUMNS as NUMERIC
 from app.main import app, check_ruler
-
-NUMERIC = ["paths", "path_nodes", "colors", "max_delta_e", "alpha_iou", "chamfer_grid_px",
-           "hausdorff_p95_grid_px", "interior_rmse", "thumb_ssim_16",
-           "bbox_center_offset_pct", "fill_ratio"]
 
 
 def cli_report(tmp_path):
@@ -72,6 +69,30 @@ def test_api_table_matches_cli(tmp_path):
         assert set(row["fails"]) <= set(before["fails"]), f"stages introduced {set(row['fails']) - set(before['fails'])}"
         assert row["name"] == "gear"
         assert g["summary"].endswith("PASS") or g["summary"].endswith("FAIL")
+
+
+def test_cell_checks_cannot_contradict_the_verdict():
+    """The viewer colours cells from row.checks, so a false check must mean FAIL.
+
+    Only one direction is guaranteed: forbidden tags and non-transparent corners
+    fail the gate without owning a column, so FAIL with all-true checks is legal.
+    Two budgets is the regression this guards -- the batch stores the effective
+    one, and fill_ratio goes unjudgeable if it ever stores the raw file again.
+    """
+    with TestClient(app) as c:
+        body = {"name": "checks", "items": [{"name": "gear",
+                                             "source_png": str(FIXTURES / "gear_gt.png"),
+                                             "raw_svg": str(FIXTURES / "gear.svg")}]}
+        bid = c.post("/batches", json=body).json()["batch_id"]
+        for _ in range(60):
+            j = c.get(f"/batches/{bid}").json()
+            if j["state"] in ("done", "error"):
+                break
+            time.sleep(0.25)
+        row = c.get(f"/batches/{bid}/gate").json()["rows"][0]
+        assert any(v is not None for v in row["checks"].values()), "no column is judged at all"
+        if any(v is False for v in row["checks"].values()):
+            assert row["verdict"] == "FAIL", row["checks"]
 
 
 def test_approve_guard_blocks_failing_asset(tmp_path):

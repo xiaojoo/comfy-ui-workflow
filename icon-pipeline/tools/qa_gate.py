@@ -373,6 +373,65 @@ def _val(r, key):
     return len(r["forbidden"]) if key == "forbidden_count" else r[key]
 
 
+# The reported columns, in table order. One list: the CLI prints it, the API
+# serialises it, and the viewer colours it. A second copy is where they drift.
+COLUMNS = ["paths", "path_nodes", "colors", "max_delta_e", "alpha_iou", "chamfer_grid_px",
+           "hausdorff_p95_grid_px", "interior_rmse", "interior_rmse_vs_snapped",
+           "thumb_ssim_16", "bbox_center_offset_pct", "fill_ratio"]
+
+# Which budget governs which reported column. Lives next to the checks that
+# enforce it so the CLI, the API and any viewer read one table rather than
+# each re-deriving the mapping -- a viewer guessing "max_" + column name gets
+# fill_ratio and bbox_center_offset_pct wrong.
+COLUMN_BUDGET = {
+    "paths": ("max_paths", "max"),
+    "path_nodes": ("max_path_nodes", "max"),
+    "colors": ("max_colors", "max"),
+    "max_delta_e": ("max_delta_e", "max"),
+    "alpha_iou": ("min_alpha_iou", "min"),
+    "chamfer_grid_px": ("max_chamfer_grid_px", "max"),
+    "hausdorff_p95_grid_px": ("max_hausdorff_grid_px", "max"),
+    "interior_rmse": ("max_interior_rmse", "max"),
+    "thumb_ssim_16": ("min_thumb_ssim_16", "min"),
+    "bbox_center_offset_pct": ("max_bbox_offset_pct", "max"),
+    "fill_ratio": ("optical_fill", "band"),
+}
+
+
+def budget_for_column(col, budget):
+    """Resolve a column to the limit it is judged against, or None if advisory."""
+    spec = COLUMN_BUDGET.get(col)
+    if not spec:
+        return None
+    key, bound = spec
+    if bound == "band":
+        target, dev = budget.get("target_fill"), budget.get("max_fill_deviation")
+        return None if target is None else {"bound": bound, "target": target, "dev": dev}
+    return None if key not in budget else {"bound": bound, "limit": budget[key]}
+
+
+def column_checks(m, budget):
+    """Per-column pass flags, derived from the same limits the verdict uses.
+
+    The viewer colours cells from this rather than re-deriving the comparison:
+    a second implementation of "is this within budget" is a second ruler, and
+    the one place it can disagree with the verdict is a shipping decision.
+    Every reported column gets a key; unjudged ones map to None so the viewer
+    can tell "advisory" apart from "missing" instead of colouring it as a breach.
+    """
+    out = {}
+    for col in COLUMNS:
+        spec = budget_for_column(col, budget)
+        v = m.get(col)
+        if spec is None or v is None:
+            out[col] = None
+        elif spec["bound"] == "band":
+            out[col] = abs(v - spec["target"]) <= spec["dev"] + 1e-9
+        else:
+            out[col] = v <= spec["limit"] + 1e-9 if spec["bound"] == "max" else v >= spec["limit"] - 1e-9
+    return out
+
+
 def selftest(source, svg_text, budget, palette):
     variants = {"clean": svg_text}
     for k in VARIANTS:

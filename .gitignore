@@ -28,3 +28,8 @@ server/.venv/
 *.sqlite3
 
 server/pip_install.log
+
+web/node_modules/
+web/dist/
+# Verification renders -- reproducible with headless chrome against the dev server.
+web/shot_*.png

@@ -19,6 +19,8 @@ import qa_gate  # noqa: E402
 import svg_flat  # noqa: E402
 import svg_norm  # noqa: E402
 
+COLUMNS = qa_gate.COLUMNS
+
 
 @dataclass
 class Kit:
@@ -52,6 +54,15 @@ def normalise(svg_text, kit):
 def flatten(svg_text, kit, snap=True, group=True, min_area=0.0):
     text, drift = svg_flat.flatten(svg_text, kit.raw, snap, group, min_area)
     return text, drift
+
+
+def budget_for(column, budget):
+    """The limit a column is judged against -- same table the gate enforces with."""
+    return qa_gate.budget_for_column(column, budget)
+
+
+def column_checks(measurement, budget):
+    return qa_gate.column_checks(measurement, budget)
 
 
 def ruler_selftest(source_png, svg_text, kit):

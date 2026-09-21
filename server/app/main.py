@@ -10,8 +10,9 @@ import json
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Query
 from pydantic import BaseModel, Field, field_validator
+from sqlalchemy import select
 
 from . import gates, runner
 from .config import FIXTURES
@@ -71,7 +72,11 @@ def health():
 
 @app.post("/batches", status_code=202)
 def create_batch(body: BatchIn):
-    kit = Kit.load().raw
+    k = Kit.load()
+    # Persist the *effective* budget: the gate judges against Kit.budget, which
+    # injects target_fill and grid. Storing the raw file instead gives a batch two
+    # budgets, and fill_ratio silently stops being checkable in the viewer.
+    kit = {**k.raw, "budget": k.budget}
     with Session() as s:
         b = Batch(name=body.name, kit=kit, state="queued")
         b.assets = [Asset(name=i.name, source_png=str(i.source_png), raw_svg=i.raw_svg.read_text(encoding="utf-8"))
@@ -81,6 +86,22 @@ def create_batch(body: BatchIn):
         bid, n = b.id, len(b.assets)
     pos = runner.runner.submit(bid)
     return {"batch_id": bid, "assets": n, "queue_position": pos}
+
+
+@app.get("/batches")
+def list_batches(limit: int = Query(default=50, ge=1, le=500)):
+    """Board view: one row per batch with the counts a reviewer scans for."""
+    with Session() as s:
+        out = []
+        for b in s.scalars(select(Batch).order_by(Batch.id.desc()).limit(limit)):
+            out.append({
+                "batch_id": b.id, "name": b.name, "state": b.state, "error": b.error,
+                "created_at": b.created_at, "finished_at": b.finished_at,
+                "assets": len(b.assets),
+                "passed": sum(1 for a in b.assets if a.verdict == "PASS"),
+                "approved": sum(1 for a in b.assets if a.approval == "approved"),
+            })
+        return {"batches": out}
 
 
 @app.get("/batches/{batch_id}")
@@ -99,20 +120,21 @@ def get_batch(batch_id: int):
 @app.get("/batches/{batch_id}/gate")
 def gate_table(batch_id: int):
     """The per-asset table, in the same columns the CLI prints."""
-    cols = ["paths", "path_nodes", "colors", "max_delta_e", "alpha_iou", "chamfer_grid_px",
-            "hausdorff_p95_grid_px", "interior_rmse", "interior_rmse_vs_snapped",
-            "thumb_ssim_16", "bbox_center_offset_pct", "fill_ratio"]
+    cols = gates.COLUMNS
     with Session() as s:
         b = s.get(Batch, batch_id)
         if b is None:
             raise HTTPException(404, "no such batch")
-        rows = [{"id": a.id, "name": a.name, "verdict": a.verdict, "fails": a.gate.get("fails", []),
+        rows = [{"id": a.id, "name": a.name, "verdict": a.verdict, "approval": a.approval,
+                 "fails": a.gate.get("fails", []),
+                 "checks": gates.column_checks(a.gate, b.kit["budget"]),
                  "before_stages": a.meta.get("before_stages", {}),
                  **{c: a.gate.get(c) for c in cols}} for a in b.assets]
         passed = sum(1 for r in rows if r["verdict"] == "PASS")
         return {"state": b.state, "columns": cols, "rows": rows,
                 "summary": f"{passed}/{len(rows)} PASS",
-                "budget": b.kit["budget"], "optical_fill": b.kit["optical_fill"]}
+                "budget": b.kit["budget"], "optical_fill": b.kit["optical_fill"],
+                "column_budget": {c: gates.budget_for(c, b.kit["budget"]) for c in cols}}
 
 
 class Approval(BaseModel):
