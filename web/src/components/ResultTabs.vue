@@ -9,10 +9,23 @@ const emit = defineEmits(['favorite', 'pick', 'useforvideo'])
 const { t } = useI18n()
 
 // Which templates can take a figure as their first frame, asked of the template list
-// rather than hardcoded: a second image-driven video template would appear here without
-// anyone remembering to edit this file.
+// rather than hardcoded. Only the first gets a button here -- with two H3 routes a second
+// glyph in the corner would be two identical arrows, so the drawer carries the choice.
 const videoTargets = computed(() => (props.templates || [])
   .filter((x) => x.media === 'video' && (x.fields || []).includes('image')))
+
+// 做高清 targets, asked of the template list the same way: the enhance graphs name
+// their input field after the medium, so the button follows the graph, not an id.
+const hdImageTarget = computed(() => (props.templates || [])
+  .find((x) => x.category === 'enhance' && (x.fields || []).includes('image')))
+const hdVideoTarget = computed(() => (props.templates || [])
+  .find((x) => (x.fields || []).includes('video')))
+
+// 拿去改: the reference-driven graph, found the same way -- by the field it reads. The
+// picked result becomes ref1, so a figure can be re-lit or re-composited without
+// re-uploading it out of the engine's output folder by hand.
+const editTarget = computed(() => (props.templates || [])
+  .find((x) => (x.fields || []).includes('ref1')))
 
 const outputs = computed(() => props.task?.outputs || [])
 const picked = ref(0)
@@ -152,10 +165,25 @@ watch(() => [props.runs?.length, tab.value], () => nextTick(observe))
                           @click.stop="emit('favorite', !task.favorite)">
                     {{ task.favorite ? '★' : '☆' }}
                   </button>
-                  <button v-for="vt in videoTargets" v-show="kindOf(current) === 'image'" :key="vt.id"
-                          class="iconbtn" :title="`${t.useForVideo} · ${vt.name}`"
-                          @click.stop="emit('useforvideo', { task, index: picked, target: vt.id })">
+                  <button v-if="videoTargets.length" v-show="kindOf(current) === 'image'"
+                          class="iconbtn" :title="`${t.useForVideo} · ${videoTargets[0].name}`"
+                          @click.stop="emit('useforvideo', { task, index: picked, target: videoTargets[0].id })">
                     ▷
+                  </button>
+                  <button v-if="hdImageTarget" v-show="kindOf(current) === 'image'"
+                          class="iconbtn" :title="`${t.useForHD} · ${hdImageTarget.name}`"
+                          @click.stop="emit('useforvideo', { task, index: picked, target: hdImageTarget.id })">
+                    ✦
+                  </button>
+                  <button v-if="editTarget" v-show="kindOf(current) === 'image'"
+                          class="iconbtn" :title="`${t.useForEdit} · ${editTarget.name}`"
+                          @click.stop="emit('useforvideo', { task, index: picked, target: editTarget.id })">
+                    ✎
+                  </button>
+                  <button v-if="hdVideoTarget" v-show="kindOf(current) === 'video'"
+                          class="iconbtn" :title="`${t.useForHD} · ${hdVideoTarget.name}`"
+                          @click.stop="emit('useforvideo', { task, index: picked, target: hdVideoTarget.id })">
+                    ✦
                   </button>
                 </div>
               </div>

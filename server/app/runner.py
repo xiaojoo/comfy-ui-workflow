@@ -18,18 +18,20 @@ from .gates import Kit
 from .models import Asset, Batch, Task
 
 
-def _bind_image(params):
-    """Put a previously generated figure where LoadImage can read it, and say what failed.
+def _bind_media(params, key):
+    """Put a previously generated file where the engine's loader can read it.
 
     The caller sends a task id, not a filename: output names belong to the engine, and a
-    stale one surfaces as a ComfyUI validation error nobody can act on.
+    stale one surfaces as a ComfyUI validation error nobody can act on. key is "image"
+    or "video"; both loaders read from ComfyUI's input dir through the same endpoint.
     """
-    src, idx = int(params["image_task"]), int(params.get("image_index", 0) or 0)
+    noun = "图" if key == "image" else "视频"
+    src, idx = int(params[f"{key}_task"]), int(params.get(f"{key}_index", 0) or 0)
     with Session() as s:
         t = s.get(Task, src)
         outs = list(t.outputs) if t else []
     if not outs:
-        raise RuntimeError(f"任务 {src} 没有可用产物，先换一张图")
+        raise RuntimeError(f"任务 {src} 没有可用产物，先换一张{noun}")
     if idx >= len(outs):
         raise RuntimeError(f"任务 {src} 只有 {len(outs)} 个产物，没有第 {idx + 1} 个")
     o = outs[idx]
@@ -109,7 +111,17 @@ class Runner:
         try:
             if params.get("image_task") and not params.get("image"):
                 log = stage(10, f"绑定参考图（取自任务 {params['image_task']}）", log)
-                params["image"] = _bind_image(params)
+                bound = _bind_media(params, "image")
+                # A reference-driven template reads its target from ref1, not image. Writing
+                # the wrong key here would leave the graph in text-to-image mode while the
+                # log claimed the image had been bound.
+                params["ref1" if "ref1" in tpl["fields"] else "image"] = bound
+                with Session() as s:
+                    s.get(Task, task_id).params = dict(params)
+                    s.commit()
+            if params.get("video_task") and not params.get("video"):
+                log = stage(10, f"绑定原视频（取自任务 {params['video_task']}）", log)
+                params["video"] = _bind_media(params, "video")
                 with Session() as s:
                     s.get(Task, task_id).params = dict(params)
                     s.commit()

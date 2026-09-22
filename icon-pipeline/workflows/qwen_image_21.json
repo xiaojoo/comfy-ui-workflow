@@ -1,0 +1,17 @@
+{
+  "1": {"class_type": "UNETLoader", "inputs": {"unet_name": "qwen_image_2.1_int8_convrot.safetensors", "weight_dtype": "default"}},
+  "2": {"class_type": "CLIPLoader", "inputs": {"clip_name": "qwen3vl_8b_w4a8.safetensors", "type": "qwen_image", "device": "default"}},
+  "3": {"class_type": "VAELoader", "inputs": {"vae_name": "qwen_image_2.1_vae_bf16.safetensors"}},
+  "4": {"class_type": "QwenImage21Cache", "inputs": {"model": ["1", 0], "device": "off", "dtype": "default"}},
+  "5": {"class_type": "TextEncodeQwenImage21", "inputs": {"clip": ["2", 0], "prompt": "a studio product shot of a matte black ceramic coffee mug on a seamless grey sweep, soft box lighting, sharp focus", "negative_prompt": "", "vae": ["3", 0], "resolution": 1024, "images.image_1": ["21", 0], "images.image_2": ["22", 0], "images.image_3": ["23", 0], "images.image_4": ["24", 0]}},
+  "21": {"class_type": "LoadImage", "inputs": {"image": "test.jpg"}},
+  "22": {"class_type": "LoadImage", "inputs": {"image": "test.jpg"}},
+  "23": {"class_type": "LoadImage", "inputs": {"image": "test.jpg"}},
+  "24": {"class_type": "LoadImage", "inputs": {"image": "test.jpg"}},
+  "6": {"class_type": "EmptyLatentImage", "inputs": {"width": 1024, "height": 1024, "batch_size": 1}},
+  "7": {"class_type": "ComfySwitchNode", "inputs": {"on_false": ["5", 2], "on_true": ["6", 0], "switch": true}},
+  "8": {"class_type": "RepeatLatentBatch", "inputs": {"samples": ["7", 0], "amount": 1}},
+  "10": {"class_type": "KSampler", "inputs": {"model": ["4", 0], "positive": ["5", 0], "negative": ["5", 1], "latent_image": ["8", 0], "seed": 42, "control_after_generate": "fixed", "steps": 25, "cfg": 1.0, "sampler_name": "euler", "scheduler": "simple", "denoise": 1.0}},
+  "11": {"class_type": "VAEDecode", "inputs": {"samples": ["10", 0], "vae": ["3", 0]}},
+  "9": {"class_type": "SaveImage", "inputs": {"images": ["11", 0], "filename_prefix": "studio/qwen_image"}}
+}

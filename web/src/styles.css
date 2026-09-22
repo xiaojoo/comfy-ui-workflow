@@ -48,6 +48,16 @@ html { overflow-x: clip; }
   * { scrollbar-width: thin; scrollbar-color: var(--line-2) transparent; }
 }
 
+/* The last platform widget: the title bubble. tooltip.js swaps every title attribute
+   for a data-tip and positions this one above (or below) the control it annotates.
+   It is the topmost layer so a tip still reads over the drawer and the lightbox. */
+.ui-tip {
+  position: fixed; z-index: 90; max-width: 320px; padding: 4px 8px;
+  border-radius: 6px; background: var(--panel-2); border: 1px solid var(--line-2);
+  color: var(--fg); font-size: 12px; line-height: 1.4; overflow-wrap: break-word;
+  box-shadow: 0 10px 28px #0009; pointer-events: none;
+}
+
 body {
   margin: 0; background: var(--bg); color: var(--fg);
   font: 14px/1.55 "Segoe UI", "Microsoft YaHei UI", "PingFang SC", system-ui, sans-serif;

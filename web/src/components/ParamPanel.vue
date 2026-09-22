@@ -6,8 +6,8 @@ import NumberField from './NumberField.vue'
 import FileField from './FileField.vue'
 
 const props = defineProps({ template: Object, params: Object, models: Object, refShot: Object,
-                           busy: Boolean, err: String })
-const emit = defineEmits(['submit', 'close'])
+                           routes: Array, busy: Boolean, err: String })
+const emit = defineEmits(['submit', 'close', 'route'])
 const { t } = useI18n()
 
 const tab = ref('basic')
@@ -18,8 +18,11 @@ const SIZES = computed(() => {
   const base = [[512, 512], [768, 768], [1024, 1024], [1024, 768], [768, 1024]]
   const d = props.template?.defaults
   const own = d?.width && d?.height ? [[d.width, d.height]] : []
+  // A template whose model has its own size grid (Qwen-Image 2.1 ships 2K natively)
+  // declares it; offering 512x512 next to a 2K-native backbone is a trap, not a choice.
+  const grid = props.template?.sizes?.length ? props.template.sizes : base
   const seen = new Set()
-  return [...own, ...base].filter(([w, h]) => !seen.has(`${w}x${h}`) && seen.add(`${w}x${h}`))
+  return [...own, ...grid].filter(([w, h]) => !seen.has(`${w}x${h}`) && seen.add(`${w}x${h}`))
 })
 const sizeKey = computed({
   get: () => `${props.params.width}x${props.params.height}`,
@@ -69,10 +72,22 @@ const schedulerOptions = computed(() => named(props.models?.schedulers, props.pa
 // Fields with no dedicated control get a plain input, inferred numeric or text from
 // the template's own default. New graph knobs then appear without editing this file.
 const DEDICATED = ['prompt', 'negative', 'width', 'height', 'batch', 'steps', 'cfg', 'seed', 'unet', 'clip',
-                   'shift', 'sampler', 'scheduler', 'denoise', 'image', 'model']
+                   'shift', 'sampler', 'scheduler', 'denoise', 'image', 'video', 'model',
+                   'ref1', 'ref2', 'ref3', 'ref4']
 const extras = computed(() => (props.template?.fields || []).filter((f) => !DEDICATED.includes(f)))
+// Reference slots are filenames the engine must be able to read, so they get the same
+// upload-or-drop control as `image` -- a text box here invites a path that is not there.
+const refFields = computed(() => (props.template?.fields || []).filter((f) => f.startsWith('ref') && f !== 'ref_size'))
 function isNum(f) { return typeof props.template?.defaults?.[f] === 'number' }
 function labelFor(f) { return t.value[f] || t.value.th[f] || f }
+
+// Enum knobs whose values belong to the engine, not to us. A text box where only
+// "match" and "max" are valid is a control that is wrong two thirds of the time.
+const ENGINE_COMBO = { ref_size: 'refsizing' }
+function comboOptions(f) {
+  const list = props.models?.[ENGINE_COMBO[f]]
+  return list?.length ? named(list, props.params[f]) : null
+}
 
 // 2000 is POST /tasks' own ceiling on the prompt, so the counter can say where the
 // request will start being refused instead of discovering it after the click.
@@ -109,6 +124,11 @@ function go() {
       <p v-if="err" class="drift">{{ err }}</p>
 
       <template v-if="tab === 'basic'">
+        <label v-if="routes?.length > 1" class="ff-row">{{ t.route }}
+          <Select :model-value="template.id" :options="routes.map(r => ({ value: r.id, label: r.name }))"
+                  :label="t.route" @update:model-value="emit('route', $event)" />
+        </label>
+
         <label v-if="has('unet')">{{ t.model }}
           <Select v-model="params.unet" :options="unetOptions" :label="t.model" />
         </label>
@@ -130,8 +150,9 @@ function go() {
           </small>
         </label>
 
-        <div v-if="refShot && !params.image" class="refrow">
-          <img :src="refShot.url" :alt="refShot.filename" />
+        <div v-if="refShot && !params.image && !params.video" class="refrow">
+          <video v-if="/\.(mp4|webm|mov)$/i.test(refShot.filename || '')" :src="refShot.url" preload="metadata" muted />
+          <img v-else :src="refShot.url" :alt="refShot.filename" />
           <span>{{ t.refImage }} · {{ t.refFrom }} {{ refShot.from }}<br />
             <small>{{ t.useForVideoHint }}</small></span>
         </div>
@@ -140,9 +161,18 @@ function go() {
           <FileField v-model="params.image" :label="t.image" />
         </label>
 
+        <label v-if="has('video')" class="ff-row">{{ t.video }}
+          <FileField v-model="params.video" :label="t.video" kind="video" />
+        </label>
+
+        <label v-for="f in refFields" :key="f" class="ff-row">{{ labelFor(f) }}
+          <FileField v-model="params[f]" :label="labelFor(f)" />
+        </label>
+
         <div v-if="extras.length" class="grp">
           <label v-for="f in extras" :key="f">{{ labelFor(f) }}
-            <NumberField v-if="isNum(f)" v-model="params[f]" :label="labelFor(f)" />
+            <Select v-if="comboOptions(f)" v-model="params[f]" :options="comboOptions(f)" :label="labelFor(f)" />
+            <NumberField v-else-if="isNum(f)" v-model="params[f]" :label="labelFor(f)" />
             <input v-else v-model="params[f]" />
           </label>
         </div>

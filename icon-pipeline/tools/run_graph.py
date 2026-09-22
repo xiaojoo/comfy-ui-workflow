@@ -3,6 +3,7 @@
 import json
 import sys
 import time
+import urllib.error
 import urllib.request
 from pathlib import Path
 
@@ -29,18 +30,31 @@ def wait(pid, timeout=900, poll=1.0):
 
     status carries the execution_error message when there is one, because
     status_str alone says only 'error' and the caller has to show a reason.
+
+    A refused or reset connection is the engine's process dying mid-job, not a reason
+    to give up: the port comes back when the distro's supervisor restarts it, and the
+    finished artefact is then in history again. So keep polling inside the budget and
+    only report DIED when the budget runs out with the prompt never having appeared.
     """
     t0 = time.time()
+    down = False
     while True:
-        h = _get(f"{SERVER}/history/{pid}")
-        if pid in h:
-            st = h[pid].get("status", {}).get("status_str", "?")
-            for m in (h[pid].get("status", {}).get("messages") or []):
-                if m[0] == "execution_error":
-                    st += ": " + str(m[1].get("exception_message", ""))[:200]
-            return st, h[pid].get("outputs", {}), time.time() - t0
+        try:
+            h = _get(f"{SERVER}/history/{pid}")
+            if pid in h:
+                st = h[pid].get("status", {}).get("status_str", "?")
+                for m in (h[pid].get("status", {}).get("messages") or []):
+                    if m[0] == "execution_error":
+                        st += ": " + str(m[1].get("exception_message", ""))[:200]
+                if down:
+                    st += " (engine restarted mid-job)"
+                return st, h[pid].get("outputs", {}), time.time() - t0
+            down = False
+        except (urllib.error.URLError, ConnectionError, OSError):
+            down = True
         if time.time() - t0 > timeout:
-            return "TIMEOUT", {}, time.time() - t0
+            return ("DIED: engine restarted and this prompt is not in its history"
+                    if down else "TIMEOUT"), {}, time.time() - t0
         time.sleep(poll)
 
 

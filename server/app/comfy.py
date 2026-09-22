@@ -58,25 +58,29 @@ def collect(pid, timeout=900):
 
     Every saved file is returned, not just images: this line's deliverables are
     mp4 and glb as often as png, and filtering on kind silently produced tasks
-    that reported success with nothing attached.
+    that reported success with nothing attached. Files whose type is "input" are
+    echoes of a LoadVideo's own source, not a deliverable, and are dropped.
     """
     status, outputs, secs = run_graph.wait(pid, timeout=timeout)
-    return status, run_graph.saved_files(outputs), secs
+    files = [f for f in run_graph.saved_files(outputs) if f.get("type") != "input"]
+    return status, files, secs
 
 
 def upload(src, name=None):
-    """Put a file we produced where LoadImage can see it, and return its stored name.
+    """Put a file we produced where LoadImage/LoadVideo can see it, and return its stored name.
 
-    LoadImage only lists ComfyUI's own input/ directory, so an image this server
-    generated into output/ cannot be fed straight back to a video or 3D job -- it has
-    to go through the same POST /upload/image the browser's own upload button uses.
+    LoadImage and LoadVideo only list ComfyUI's own input/ directory, so a file this
+    server generated into output/ cannot be fed straight back to a video or 3D job -- it
+    has to go through the same POST /upload/image the browser's own upload button uses
+    (measured: the engine accepts an mp4 there and LoadVideo lists it).
     """
     p = Path(src)
     fname = name or p.name
+    mime = {".mp4": "video/mp4", ".webm": "video/webm", ".mov": "video/quicktime"}.get(p.suffix.lower(), "image/png")
     boundary = uuid.uuid4().hex
     body = b"".join([
         f'--{boundary}\r\nContent-Disposition: form-data; name="image"; filename="{fname}"\r\n'
-        f'Content-Type: image/png\r\n\r\n'.encode(),
+        f'Content-Type: {mime}\r\n\r\n'.encode(),
         p.read_bytes(),
         f'--{boundary}\r\nContent-Disposition: form-data; name="type"\r\n\r\ninput\r\n'.encode(),
         f'--{boundary}\r\nContent-Disposition: form-data; name="overwrite"\r\n\r\ntrue\r\n'.encode(),
@@ -135,6 +139,20 @@ def alive():
         return False
 
 
+def _combo(v):
+    """The option list of a combo input, in whichever shape this engine reports it.
+
+    Classic nodes answer ``[["a","b"], {...}]``; v3 ``io.Schema`` nodes answer
+    ``["COMBO", {"options": ["a","b"]}]``. Reading only the first shape returns nothing
+    and the UI silently offers no choices.
+    """
+    if isinstance(v, list) and v and isinstance(v[0], list):
+        return v[0]
+    if isinstance(v, list) and len(v) > 1 and isinstance(v[1], dict):
+        return v[1].get("options") or []
+    return []
+
+
 def catalog():
     """Model files the running engine can actually load, split by role.
 
@@ -147,17 +165,19 @@ def catalog():
         info = _get("/object_info/" + node)
         opts = []
         for sec in ("required", "optional"):
-            v = info.get(node, {}).get("input", {}).get(sec, {}).get(key)
-            if isinstance(v, list) and v and isinstance(v[0], list):
-                opts = v[0]
+            opts = opts or _combo(info.get(node, {}).get("input", {}).get(sec, {}).get(key))
         out[role] = [{"name": n, "verified": n == VERIFIED[role]} for n in sorted(opts)]
     # The sampler and schedule names are the engine's own combo, not a list kept here:
     # every studio graph samples through a plain KSampler node (70, 8, 24), so one
     # query covers all three.
     req = _get("/object_info/KSampler").get("KSampler", {}).get("input", {}).get("required", {})
     for key, role in (("sampler_name", "samplers"), ("scheduler", "schedulers")):
-        v = req.get(key)
-        out[role] = sorted(v[0]) if isinstance(v, list) and isinstance(v[0], list) else []
+        out[role] = sorted(_combo(req.get(key)))
+    # ref_image_size is the reference route's fidelity/speed switch. Its values come from
+    # the node, so the UI cannot offer a size this build of H3 does not implement.
+    v = (_get("/object_info/MiniMaxH3ReferenceToVideo")
+         .get("MiniMaxH3ReferenceToVideo", {}).get("input", {}).get("required", {}))
+    out["refsizing"] = sorted(_combo(v.get("ref_image_size")))
     return out
 
 

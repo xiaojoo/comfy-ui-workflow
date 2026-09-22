@@ -30,9 +30,23 @@
   所以身份由这张图钉住。实测（8 步 turbo）：480×864×124 帧 **89.0s**、
   768×1344×124 帧 **301.7s**、480×864×362 帧（15.1 秒）**412.6s**；
   显存最低 0.35–0.75 GiB、WSL 内存最低 0.44 GiB —— 15.5 GiB 上限内不需要提额。
+- **人物视频有两条路线，差别不在身份在构图**：`char_video_ref`（MiniMax H3 **ref2va**，
+  权重 19999 MiB 已装）用参考图锁身份而不是用首帧。同一张人物图、同一动作、同一 seed，
+  480×864×124 帧实测：首帧路线 78.7s / 8 步，ref2va match **53.6s**、max **55.6s** / 4 步
+  —— max 只贵 4%，不是节点提示写的"慢好几倍"。两条 ref 路线都跟住了脸、打结红发带、
+  绿外套和灰背景，挥手手 5 指；**但它不锁景别**：提示词写了 `no zoom`，它仍自己推成脸部特写。
+  要保住原图的构图就走首帧路线。抽屉顶部有「路线」下拉，切换时已绑的那张图保留。
 - **手部畸变是量出来的，不是猜的**：同一个"双手在脸前、十指可见"的姿势，
   Z-Image Turbo **4/4 多指**（放大后可见 12 根），Krea-2 Turbo **4/4 无多余指**，
   HiDream i1 full 2/2 干净但 85s/张（27 倍代价，没有更好）。所以人物图默认 Krea-2。
+
+- **修复线与概念线四条已实测**：`upscale_image`（832×1216→3328×4864，4x-UltraSharp 6.0s，
+  anime 权重热态 1.0s）、`upscale_video`（逐帧 4×、帧率与音轨保留；832×480×33 帧 **42.3s**、
+  480×864×62 帧 **82.6s**；480×864×124 与 832×480×81 帧会把引擎 OOM 压死，越线前别提交）、
+  `xianxia_char`（仙侠动漫预设，1024×1536×2 张 34.4s）、`xuanhuan_world`
+  （玄幻世界预设，1536×1024×2 张 34.4s）。两条预设的发丝/材质细节措辞是 A/B 出来的：
+  发带区拉普拉斯方差 479→731-820（8 步旧配方 vs 16 步新配方）。
+  结果轨道里图/视频右上角的 ✦ 直接把它绑给对应高清工作流。
 
 细节、实测数字和已知缺点见 [icon-pipeline/README.md](icon-pipeline/README.md)。
 
@@ -52,12 +66,24 @@ bash tools/run_d0.sh                                   # 抠图→纯色背景�
 ```bash
 cd server && .venv/Scripts/python.exe -m uvicorn app.main:app --port 8191   # 后端
 cd web && npm install && npm run dev                                        # 界面 http://localhost:5180
-cd server && .venv/Scripts/python.exe -m pytest tests -q                    # 16 项验收
+cd server && .venv/Scripts/python.exe -m pytest tests -q                    # 35 项验收
 ```
 
 人物线在界面上是一次点击的两步：`人物图片-真人身材` 卡片出 4 张 → 在预览轨道里选中一张 →
 点它右上角的 ▷ → 抽屉里已经绑好这张图（显示来源任务号），改动作描述即可出片。
 骨架比值要单独取：`wsl -d ComfyUI -- bash -c "cd /data/ComfyUI && POSE_IMAGES=<png> /data/ComfyUI/venv/bin/python /mnt/h/workflow/icon-pipeline/tools/pose_keys.py"`。
+
+通用生图/改图是同一条图的两种模式：`通用生图-Qwen Image 2.1` 填提示词出图（尺寸取 32 的倍数，
+官方原生 2K 直出）；`通用改图-Qwen Image 2.1` 认 ref1 为被改的对象、ref2-4 为额外参考，
+提示词里用 `<image1>…<image4>` 指代，画布跟 ref1 走。在任意结果的预览轨道点 ✎，
+那张图就直接成为 ref1，不用再从引擎的 output 目录里手动搬。
+代价阶梯（25 步、cfg 1、euler/simple，每格换 seed 避开引擎缓存；RTX 4080 Super + WSL 15.5 GiB）：
+1024² 冷 15.1s / 暖 9.1s、1152×896 10.1s、1024²×4 35.3s、**2048² 62.7–65.9s**、2048²@40 步 98.1s、
+2048²×2 129.5s、2048²×4 278.3s；改图 1 参考 @1024 15.1–24.2s、2 参考 24.2–33.3s、@2048 122.1s。
+全程 `MemAvailable` 最低 **1.83 GiB**（三件套合计 13.27 GiB，所以不用动 `.wslconfig`），
+显存最低只剩 **0.49 GiB**——这台机器上先撞的是卡，不是 WSL 配额。
+对照：把完全相同的图重提一次，`seconds` 报 0.0 且**产物文件名不前进**（`qwen_image_00025_.png`
+被两行任务共用）——这就是缓存命中，所以耗时数字必须换 seed 并核对文件名。
 
 阈值、色板、栅格一律读 `icon-pipeline/brand-kit.example.json`，不散落在代码里。
 `?lang=en` 或右上角按钮切中英文，默认中文。
@@ -67,6 +93,9 @@ cd server && .venv/Scripts/python.exe -m pytest tests -q                    # 16
 - `path_nodes` 预算未达成，且已证伪三条后处理路径（详见 icon-pipeline/README）。
 - 界面拆成两屏：工作流列表（卡片 + 右侧参数抽屉 + 下方预览/状态/日志三个标签页）与最近任务；
   引擎与存储状态收在左栏底部。左侧另外 5 个导航项是显式「未实现」页，不摆假数据。
+- 悬浮提示全部由 `web/src/tooltip.js` 接管：写进 DOM 的 `title` 会被换成 `data-tip` 再自绘，
+  所以浏览器原生气泡不再出现。提示只认纯文本（`\n` 不换行），禁用控件上的提示按他的要求
+  跟原生一致不显示。
 - 设计稿里的「新建工作流」、卡片 ⋯ 菜单、通知铃/用户头像、FLUX.2 与 SDXL 那几张卡片
   后端一概没有，因此没做。
 - 卡片上的缩略图是 `Workflows.vue` 里写死的，图标三条与人物两条用的是真实产物截图；
@@ -87,6 +116,26 @@ cd server && .venv/Scripts/python.exe -m pytest tests -q                    # 16
   同一套绑定 3D 模板也能用，但界面上没有入口。
 - `tools/mesh_norm.py`（包围盒归一到 1 单位 + 补法线）已单独验过，但**还没接进 3D 链**，
   跑完 `hunyuan3d` 模板仍需手动执行一次。
+- `通用生图/改图` 用的 Qwen-Image-2.1 **在这台引擎上做不了视频**，五路证据（不是照抄发布稿）：
+  上游 `pipeline_tag: text-to-image`、卡片写"unified text-to-image **and image editing**"、全篇无 video 字样，
+  且 Qwen 组织在 HF 上没有任何视频模型；引擎注册表 `latent_formats.QwenImage21` 声明
+  `latent_dimensions = 2`（11 个视频格式是 3，如 Wan21 带 `temporal_downscale_ratio = 4`）；
+  `nodes_qwen.py` 里没有任何 VIDEO 输出口；真拿 5D 视频 latent 去撞，采样器报
+  `KSampler: too many values to unpack (expected 4)`；行为上量帧间差：2.1 连出两张 21.5–91.4，
+  本机真视频片段 0.04–3.91（H3 0.65、ref2va 2.8–3.9、Wan 0.04–0.56），同帧 0.00 ——
+  所以"批量出 N 张再 mux 成 mp4"是幻灯片，不是生成视频。
+  **但"这份权重永远不能"我们不写**：它的 VAE 是 Wan 系 3D VAE（`temperal_downsample=[False,True,True,True]`、
+  `scale_factor_temporal=8`，实现就在 `comfy/ldm/wan/vae2_2.py`），DiT 的 RoPE 也留了一条帧/层轴
+  （`axes_dims_rope=[16,56,56]`、`causal_condition=True`）——缺的是训练好的时间路径与引擎接线，不是形状。
+  视频仍走 `图标动画-文生视频`(Wan 1.3B) / `人物视频`(MiniMax H3) 两条。
+- 文本编码器的下拉框在界面上**根本没渲染**：`ParamPanel.vue` 把 `clip` 列进了 DEDICATED，却没有对应的控件块，
+  所以凡是 fields 里写了 `clip` 的模板（图标三条、人物两条）实际都改不了文本编码器。
+  Qwen 两条干脆不暴露 unet/clip/vae：官方 int8 编码器档合计 16.10 GiB，超 WSL 15.5 GiB 上限，
+  挑错了不是报错而是整个发行版僵死。
+- 透明底只有提示词措辞这一个开关，且"文件带 alpha 通道"不作证据——2.1 的 PNG **永远是 RGBA 形状**：
+  不包措辞时透明像素 0.00%，包了 97.69%。图标线的 alpha/抠图门禁没有接到这条线。
+- 改图界面给 4 张参考（ref1 被改对象 + ref2-4 参考），模型官方支持到 10 张；
+  官方列出的 circle/涂选/独立 mask 局部改图**一概没接**，当前只能整图指令改。
 - 视频**人物一致性仍然没有可分辨指标**。H3 这条线现在能给的只有肉眼对照：
   同一条 5 秒片子的第 0/62/123 帧，脸、红发带、绿外套、背景都还在，挥出去的那只手是 5 指
   ——这是"看起来是同一个人"，不是一个数。Wan 线那句"19 秒上限"只对 Wan 成立，
@@ -101,4 +150,10 @@ cd server && .venv/Scripts/python.exe -m pytest tests -q                    # 16
 - SDPose 的 `POSE_KEYPOINT` 是自定义类型，接到写文本节点上会被引擎**静默跳过**——
   作业报成功、文件不存在。所以关键点只能绕开图的执行路径，在发行版里用引擎自带的 venv 直接推理
   （`icon-pipeline/tools/pose_keys.py`）。
+- **autogrow 输入在 API 图里只认点号键**。`MiniMaxH3ReferenceToVideo` 的参考图槽位，
+  `/object_info` 报的名字是 `ref_image_0`：写成顶层键会校验通过、执行时报未知参数；
+  写成 `"ref_images": {"ref_image_0": [链接]}` 会**校验通过、执行成功、参考图被整个丢掉**
+  （引擎缓存记录里 LoadImage 根本没执行，换一张人还是命中同一份缓存）——这是最坏的一种，
+  绿着骗人。只有 `"ref_images.ref_image_0": ["5", 0]` 真的把图送进模型。
+  `tests/test_character.py` 把这个形状钉住了。
 - 无 API key，所有 `partner/*` 云端节点不可用；矢量只有本地一条路。

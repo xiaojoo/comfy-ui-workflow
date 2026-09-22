@@ -103,17 +103,35 @@ async function favorite(v) {
   current.value = await api.task(current.value.id)
 }
 
-// The ▷ on a finished figure: same drawer, different template, with that picture bound
-// as the clip's first frame. The preview stays on the figure while the form changes --
+// The ▷/✦ on a finished figure: same drawer, different template, with that file bound
+// as the new job's input. The preview stays on the figure while the form changes --
 // it is the thing being described, not the thing being edited.
+const videoRoutes = computed(() => templates.value.filter((x) => x.media === 'video'
+  && (x.fields || []).includes('image')))
+
 function useForVideo({ task, index, target }) {
   const tpl = templates.value.find((x) => x.id === target)
   if (!tpl) return
+  const key = (tpl.fields || []).includes('video') ? 'video' : 'image'
   picked.value = tpl
-  params.value = { ...tpl.defaults, image_task: task.id, image_index: index }
+  params.value = { ...tpl.defaults, [`${key}_task`]: task.id, [`${key}_index`]: index }
   refShot.value = { ...task.outputs[index], from: task.ref }
   drawer.value = true
   onlyTpl.value = tpl.id
+  err.value = ''
+}
+
+// Switching route inside the drawer keeps the bound figure: the two H3 routes answer the
+// same question differently, and re-picking the picture after every switch is busywork.
+function setRoute(id) {
+  const tpl = templates.value.find((x) => x.id === id)
+  if (!tpl) return
+  const keep = {}
+  for (const k of ['image', 'image_task', 'image_index', 'video', 'video_task', 'video_index']) {
+    if (params.value[k] !== undefined && params.value[k] !== '') keep[k] = params.value[k]
+  }
+  picked.value = tpl
+  params.value = { ...tpl.defaults, ...keep }
   err.value = ''
 }
 
@@ -185,7 +203,8 @@ onBeforeUnmount(() => clearInterval(timer))
       </div>
 
       <ParamPanel v-if="drawer && picked" :template="picked" :params="params" :models="models?.catalog"
-                  :ref-shot="refShot" :busy="busy" :err="err" @submit="submit" @close="drawer = false" />
+                  :ref-shot="refShot" :routes="videoRoutes" :busy="busy" :err="err"
+                  @submit="submit" @route="setRoute" @close="drawer = false" />
     </div>
   </div>
 </template>
