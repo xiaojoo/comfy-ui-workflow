@@ -32,6 +32,11 @@ MAX_RETRY = 3
 # card can still show as a row of thumbnails, and each one is a real generation.
 MAX_REPEAT = 8
 ON_ERROR = ("stop", "skip")
+# A control wire carries no picture: it says when the step at its far end is allowed to
+# run. "fail" is the useful one -- a fallback workflow that only fires when the first one
+# did not produce anything.
+WHEN = ("ok", "fail", "always")
+WHEN_CN = {"ok": "上游成功", "fail": "上游失败", "always": "无条件"}
 # A step is polled, not watched: the runner records TIMEOUT in its own task row, so this
 # only covers the case where that worker died with the row still open. Deliberately
 # longer than the slowest template's own budget (2700s for a long clip).
@@ -87,12 +92,24 @@ def validate(graph):
         by_id[nid] = tpl
 
     wired = set()
+    ctrl = {}
+    data_pairs = set()
     for e in edges:
         src, dst = by_id.get(e.get("from")), by_id.get(e.get("to"))
         if src is None or dst is None:
             raise HTTPException(422, f"有一根线连到了不存在的步骤：{e.get('from')} → {e.get('to')}")
         if e.get("from") == e.get("to"):
             raise HTTPException(422, f"步骤 {e['from']} 不能连到自己")
+        if e.get("kind") == "control":
+            if e.get("when", "ok") not in WHEN:
+                raise HTTPException(422, f"{e['from']} → {e['to']} 这根条件线只能是 "
+                                         f"{'、'.join(WHEN)}，现在是 {e.get('when')!r}")
+            key = (e["to"], e["from"])
+            if key in ctrl:
+                raise HTTPException(422, f"步骤 {e['to']} 已经有一条来自 {e['from']} 的条件线，"
+                                         f"两条条件只能留一条")
+            ctrl[key] = e.get("when", "ok")
+            continue
         if e.get("out") != src["media"]:
             raise HTTPException(422, f"步骤 {e['from']} 只有 {src['media']} 输出口，没有 {e.get('out')!r}")
         port = next((p for p in templates.ports_of(dst)["in"] if p["name"] == e.get("in")), None)
@@ -106,9 +123,17 @@ def validate(graph):
         if key in wired:
             raise HTTPException(422, f"步骤 {e['to']} 的 {e['in']} 已经有一根线：一个输入只能有一个来源")
         wired.add(key)
+        data_pairs.add((e["to"], e["from"]))
         a = e.get("attempt", 0)
         if isinstance(a, bool) or not isinstance(a, int) or not 0 <= a < MAX_REPEAT:
             raise HTTPException(422, f"步骤 {e['to']} 的这根线要取上游第几遍，只能是 1–{MAX_REPEAT}")
+
+    # A step cannot both consume a picture and wait for the step that makes it to fail:
+    # the branch it is on would have no input the moment it is the one allowed to run.
+    for (dst, src), when in ctrl.items():
+        if when == "fail" and (dst, src) in data_pairs:
+            raise HTTPException(422, f"步骤 {dst} 既接了 {src} 的产物，又设成「{src} 失败时才走」："
+                                     f"这两件事不能同时成立")
 
     return _order(nodes, edges)
 
@@ -169,21 +194,36 @@ def start(flow_id):
 
 def _walk(run_id, graph, order):
     edges = graph.get("edges") or []
+    data = [e for e in edges if e.get("kind") != "control"]
+    gates = defaultdict(list)
+    for e in edges:
+        if e.get("kind") == "control":
+            gates[e["to"]].append(e)
     media_of = {n["id"]: templates.BY_ID[n["template"]]["media"] for n in order}
     # node -> the task ids that finished, in repetition order. A step that failed or was
     # skipped stays out of here, so its downstream reads as "no input" and is skipped too
     # rather than being wired to a task with no artefacts.
     delivered = {}
+    # node -> how it ended, which is all a control wire is allowed to look at.
+    outcome = {}
     steps = None
     current = None
     try:
         for node in order:
             current = node["id"]
             tpl = templates.BY_ID[node["template"]]
+            held = [f"{g['from']}（要 {WHEN_CN[g.get('when', 'ok')]}）" for g in gates.get(current, [])
+                    if not _passes(outcome.get(g["from"]), g.get("when", "ok"))]
+            if held:
+                outcome[current] = "skipped"
+                steps = _patch(steps, run_id, current, skipped=True,
+                               error=f"条件线没满足：{'、'.join(held)}，这一步跳过")
+                continue
             gone = [f'{e["from"]}第{int(e.get("attempt") or 0) + 1}遍'
                     if int(e.get("attempt") or 0) else e["from"]
-                    for e in edges if e["to"] == current and not _has(delivered, e)]
+                    for e in data if e["to"] == current and not _has(delivered, e)]
             if gone:
+                outcome[current] = "skipped"
                 steps = _patch(steps, run_id, current, skipped=True,
                                error=f"上游 {'、'.join(gone)} 没有产物，这一步跳过")
                 continue
@@ -193,7 +233,7 @@ def _walk(run_id, graph, order):
             # Output folders are per step, not per template: two steps on one template
             # would otherwise share a prefix and the provenance would be a lie.
             params["prefix"] = f"studio/run{run_id}/{current}"
-            for e in edges:
+            for e in data:
                 if e["to"] != current:
                     continue
                 src = delivered[e["from"]][int(e.get("attempt") or 0)]
@@ -218,12 +258,15 @@ def _walk(run_id, graph, order):
                     delivered.setdefault(current, []).append(tid)
                     continue
                 break
+            if state == "done":
+                outcome[current] = "done"
             if state == "cancelled":
                 steps = _patch(steps, run_id, current, error="已取消这次运行")
                 return _close(run_id, "cancelled")
             if state != "done":
                 steps = _patch(steps, run_id, current, error=reason)
                 if (node.get("on_error") or "stop") == "skip":
+                    outcome[current] = "error"
                     continue
                 _close(run_id, "error", f"步骤 {current}（{tpl['name']}）{reason}，一共提了 {tried} 次")
                 return
@@ -234,6 +277,16 @@ def _walk(run_id, graph, order):
     except Exception as exc:
         steps = _patch(steps, run_id, current, error=f"{type(exc).__name__}: {exc}")
         _close(run_id, "error", f"{type(exc).__name__}: {exc}")
+
+
+def _passes(up, when):
+    """Does an upstream outcome satisfy one control wire? A step that never ran counts as
+    not-success, so a fallback does not need to know which of the two ways it failed."""
+    if when == "always":
+        return True
+    if when == "ok":
+        return up == "done"
+    return up in ("error", "skipped")
 
 
 def _has(delivered, e):

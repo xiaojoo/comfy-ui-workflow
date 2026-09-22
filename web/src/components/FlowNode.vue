@@ -91,5 +91,13 @@ const hot = ref(false)
 
     <Handle type="source" :position="Position.Right" :id="tpl.media" class="port out"
             :title="`${t.portOut} ${tpl.media}`" />
+    <!-- The condition ports: a wire between these two carries no picture, only "run this
+         step when that one ended this way". They sit at the bottom of the card, away from
+         the media ports -- and they have to move `top`, because the library pins the
+         vertical centre with `top: 50%` and a `bottom` offset is then simply ignored. -->
+    <Handle type="target" :position="Position.Left" id="@ctl" class="port ctl"
+            :style="{ top: 'calc(100% - 14px)' }" :title="t.canvasCtlIn" />
+    <Handle type="source" :position="Position.Right" id="@ctl" class="port ctl out"
+            :style="{ top: 'calc(100% - 14px)' }" :title="t.canvasCtlOut" />
   </div>
 </template>

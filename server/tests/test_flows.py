@@ -223,18 +223,26 @@ def step(nid, tpl, retries=0, on_error="stop", repeat=1, **params):
             "retries": retries, "on_error": on_error, "repeat": repeat}
 
 
-def fake_engine(monkeypatch, tmp_path, fail=None, count=None):
-    """A stand-in engine. `fail` is how many attempts of each step kind come back as error."""
-    fail, count, attempts, kind_of = fail or {}, count or {}, {}, {}
+def fake_engine(monkeypatch, tmp_path, fail=None, count=None, fail_nodes=None):
+    """A stand-in engine. `fail` counts failed attempts per step kind, `fail_nodes` per node id."""
+    fail, count, fail_nodes = fail or {}, count or {}, fail_nodes or {}
+    attempts, per_node, kind_of, node_of = {}, {}, {}, {}
 
     def submit(graph, client_id):
         kind_of[client_id] = _kinds_of(graph)
+        # Each step writes into its own output folder, and that folder names the node --
+        # so a test can fail one step of a chain that repeats a template.
+        node_of[client_id] = next((v["inputs"]["filename_prefix"].rsplit("/", 1)[-1]
+                                   for v in graph.values()
+                                   if v.get("inputs", {}).get("filename_prefix", "").startswith("studio/run")),
+                                  kind_of[client_id])
         return client_id
 
     def collect(pid, timeout=900):
-        kind = kind_of[pid]
+        kind, n = kind_of[pid], node_of[pid]
         attempts[kind] = attempts.get(kind, 0) + 1
-        if attempts[kind] <= fail.get(kind, 0):
+        per_node[n] = per_node.get(n, 0) + 1
+        if attempts[kind] <= fail.get(kind, 0) or per_node[n] <= fail_nodes.get(n, 0):
             return "error", [], 0.1
         files = []
         for i in range(count.get(kind, 1)):
@@ -248,6 +256,10 @@ def fake_engine(monkeypatch, tmp_path, fail=None, count=None):
     monkeypatch.setattr(runner_mod.comfy, "collect", collect)
     monkeypatch.setattr(runner_mod.comfy, "upload", lambda src, name=None: Path(src).name)
     return attempts
+
+
+def ctl(f, t, when):
+    return {"from": f, "to": t, "kind": "control", "when": when}
 
 
 def settle(c, run, secs=40):
@@ -352,6 +364,64 @@ def test_a_wire_pointing_at_a_repetition_that_never_ran_is_skipped(tmp_path, mon
     assert st["steps"][1]["state"] == "skipped"
     assert "n1第2遍" in st["steps"][1]["error"], st["steps"][1]["error"]
     assert st["state"] == "partial"
+
+
+def test_a_fallback_step_waits_for_the_first_one_to_fail(tmp_path, monkeypatch):
+    """判断: a control wire runs the other branch only when the first branch did not land."""
+    fake_engine(monkeypatch, tmp_path, count={"portrait": 1}, fail_nodes={"s1": 9})
+    graph = {"nodes": [step("s1", "char_portrait", on_error="skip", prompt="x"),
+                       step("s2", "icon_flat", prompt="fallback"),
+                       step("s3", "upscale_image")],
+             "edges": [ctl("s1", "s2", "fail"), edge("s1", "s3", "image", "image")]}
+    st = run_chain(graph)
+    assert st["steps"][0]["state"] == "error"
+    assert st["steps"][1]["state"] == "done" and st["steps"][1]["task_id"], "the fallback ran"
+    assert st["steps"][1]["error"] is None
+    assert st["steps"][2]["state"] == "skipped"
+    assert st["state"] == "partial"
+
+
+def test_a_fallback_is_skipped_when_the_step_it_waits_on_succeeded(tmp_path, monkeypatch):
+    fake_engine(monkeypatch, tmp_path, count={"portrait": 1})
+    graph = {"nodes": [step("s1", "char_portrait", prompt="x"), step("s2", "icon_flat", prompt="fallback")],
+             "edges": [ctl("s1", "s2", "fail")]}
+    st = run_chain(graph)
+    assert st["steps"][0]["state"] == "done"
+    assert st["steps"][1]["state"] == "skipped" and st["steps"][1]["task_id"] is None
+    assert "条件线没满足" in st["steps"][1]["error"] and "上游失败" in st["steps"][1]["error"]
+    assert st["state"] == "partial"
+
+
+def test_an_unconditional_control_wire_runs_whatever_happened_upstream(tmp_path, monkeypatch):
+    fake_engine(monkeypatch, tmp_path, count={"portrait": 1}, fail_nodes={"s1": 9})
+    graph = {"nodes": [step("s1", "char_portrait", on_error="skip", prompt="x"),
+                       step("s2", "icon_flat", prompt="y")],
+             "edges": [ctl("s1", "s2", "always")]}
+    st = run_chain(graph)
+    assert st["steps"][1]["state"] == "done"
+
+
+def test_an_ok_control_wire_holds_the_step_back_until_the_upstream_lands(tmp_path, monkeypatch):
+    fake_engine(monkeypatch, tmp_path, count={"portrait": 1}, fail_nodes={"s1": 9})
+    graph = {"nodes": [step("s1", "char_portrait", on_error="skip", prompt="x"),
+                       step("s2", "icon_flat", prompt="y")],
+             "edges": [ctl("s1", "s2", "ok")]}
+    st = run_chain(graph)
+    assert st["steps"][1]["state"] == "skipped" and st["steps"][1]["task_id"] is None
+
+
+@pytest.mark.parametrize("edges, says", [
+    ([ctl("s1", "s2", "maybe")], "ok、fail、always"),
+    ([ctl("s1", "s2", "fail"), ctl("s1", "s2", "ok")], "只能留一条"),
+    # Taking the picture and waiting for the failure of the step that makes it cannot both hold.
+    ([edge("s1", "s2", "image", "image"), ctl("s1", "s2", "fail")], "不能同时成立"),
+])
+def test_a_condition_that_cannot_be_evaluated_is_refused_at_save(edges, says):
+    graph = {"nodes": [step("s1", "char_portrait", prompt="x"), step("s2", "upscale_image")],
+             "edges": edges}
+    with pytest.raises(Exception) as e:
+        validate(graph)
+    assert says in str(e.value.detail), e.value.detail
 
 
 @pytest.mark.parametrize("bad, says", [

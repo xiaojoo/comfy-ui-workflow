@@ -34,6 +34,9 @@ const editing = ref(null)
 const selEdge = ref(null)
 const zoom = ref(null)
 const dirty = ref(false)
+// True between "the cards were swapped in" and "the viewport has been fitted to them".
+const fitting = ref(false)
+let fitNow = false
 const stageEl = ref(null)
 
 let seq = 0
@@ -82,7 +85,25 @@ function add(tpl) {
 // rendering at the viewport cap, i.e. every card 70% larger than designed. The buttons
 // still zoom in further by hand.
 function reframe() {
-  nextTick(() => fitView({ padding: 0.08, maxZoom: 1.1, duration: 240 }))
+  const instant = fitNow
+  fitNow = false
+  nextTick(() => {
+    fitView({ padding: 0.08, maxZoom: 1.1, ...(instant ? {} : { duration: 240 }) })
+    if (instant) fitting.value = false
+  })
+}
+
+// Opening a saved canvas used to show the chain in the top-left corner for ~180ms and then
+// slide it to the centre: the fit can only run once the library has measured the cards, and
+// the tween that then moves the viewport is what reads as a stutter. On reopen the same fit
+// runs without a tween, and the cards stay hidden until it has landed.
+function refit() {
+  fitting.value = true
+  fitNow = true
+  // If the library's measurement signal never arrives (a canvas with no cards, a reopen of
+  // the one already on screen), show the stage rather than leave it blank -- and let the
+  // next ordinary fit animate again.
+  setTimeout(() => { fitting.value = false; fitNow = false }, 600)
 }
 
 // ------------------------------------------------------------------ alignment
@@ -157,11 +178,22 @@ function delEdge(id) {
 // Note the `e.id !== c.id` guard: isValidConnection is called again when an edge is
 // written into the store, so without it a wire finds its own occupancy and is rejected
 // as a duplicate of itself -- it never renders and the only trace is an EDGE_INVALID.
+// The socket id of the condition ports. A wire between two of these carries no picture.
+const CTL = '@ctl'
+
 function canConnect(c) {
   if (!c.source || !c.target || c.source === c.target) return false
   const s = nodes.value.find((n) => n.id === c.source)
   const d = nodes.value.find((n) => n.id === c.target)
   if (!s || !d) return false
+  const fromCtl = c.sourceHandle === CTL, toCtl = c.targetHandle === CTL
+  // Either both ends are condition sockets or neither is: one carries "that step ended
+  // this way", the other carries a file, and a wire cannot do both.
+  if (fromCtl !== toCtl) return false
+  if (fromCtl) {
+    return !edges.value.some((e) => e.id !== c.id && e.source === c.source && e.target === c.target
+                              && e.data.kind === 'control')
+  }
   const port = d.data.tpl.ports.in.find((p) => p.name === c.targetHandle)
   if (!port || port.type !== s.data.tpl.media) return false
   return !edges.value.some((e) => e.id !== c.id && e.target === c.target && e.targetHandle === c.targetHandle)
@@ -169,7 +201,9 @@ function canConnect(c) {
 
 function onConnect(c) {
   if (!canConnect(c)) return
-  edges.value = [...edges.value, mkEdge(c.source, c.sourceHandle, c.target, c.targetHandle, 0)]
+  const e = c.sourceHandle === CTL ? mkCtl(c.source, c.target)
+    : mkEdge(c.source, c.sourceHandle, c.target, c.targetHandle, 0)
+  edges.value = [...edges.value, e]
   dirty.value = true
 }
 
@@ -177,6 +211,19 @@ function onConnect(c) {
 // drawn on the wire, where a translated word would not fit.
 function edgeLabel(attempt, index) {
   return `${attempt ? `r${attempt + 1}·` : ''}#${index + 1}`
+}
+
+function mkCtl(source, target, when = 'fail') {
+  return {
+    id: `e-${source}-ctl-${target}`,
+    source, target, sourceHandle: CTL, targetHandle: CTL,
+    type: 'smoothstep', class: 'ctl',
+    data: { kind: 'control', when },
+    label: when,
+    labelBgPadding: [4, 2], labelBorderRadius: 0,
+    style: { stroke: '#d9a13b', strokeWidth: 1.4, strokeDasharray: '5 4' },
+    markerEnd: { type: MarkerType.ArrowClosed, width: 12, height: 12, color: '#d9a13b' },
+  }
 }
 
 function mkEdge(source, sourceHandle, target, targetHandle, index, attempt = 0) {
@@ -236,7 +283,22 @@ const edgeEnds = computed(() => {
 const pickedSource = computed(() => nodes.value.find((n) => n.id === pickedEdge.value?.source) || null)
 const pickedOuts = computed(() => pickedSource.value?.data.run?.outputs || [])
 const pickedMax = computed(() => pickedOuts.value.length || 9)
+// A condition wire names no file, so the panel shows the condition instead of a picture.
+const whenOptions = computed(() => [
+  { value: 'fail', label: t.value.whenFail },
+  { value: 'ok', label: t.value.whenOk },
+  { value: 'always', label: t.value.whenAlways }])
+
+function setWhen(v) {
+  const e = pickedEdge.value
+  if (!e) return
+  e.data.when = v
+  e.label = v
+  dirty.value = true
+}
+
 const pickedName = computed(() => {
+  if (pickedEdge.value?.data.kind === 'control') return ''
   const o = pickedOuts.value[pickedEdge.value?.data.index ?? 0]
   return o ? (o.deleted ? t.value.deletedRun : o.filename) : ''
 })
@@ -250,7 +312,7 @@ function decorate() {
       .filter(([k, v]) => k !== 'prefix' && v !== d.tpl.defaults?.[k])
       .slice(0, 4)
       .map(([k, v]) => ({ k, v: typeof v === 'number' ? v : String(v).slice(0, 22) }))
-    const out = edges.value.filter((e) => e.source === n.id)
+    const out = edges.value.filter((e) => e.source === n.id && e.data.kind !== 'control')
     d.pickIdx = out.length ? Math.min(...out.map((e) => e.data.index ?? 0)) : 0
     d.run = byStep.get(n.id) || null
   })
@@ -264,7 +326,8 @@ function decorate() {
 // signature leaves those fields out, so the pass runs once per authored change.
 const authored = computed(() => [
   nodes.value.map((n) => `${n.id}|${JSON.stringify(n.data.params)}|${n.data.repeat}|${n.data.retries}|${n.data.on_error}`).join('#'),
-  edges.value.map((e) => `${e.source}>${e.target}:${e.targetHandle}:${e.data.index}:${e.data.attempt ?? 0}`).join('#'),
+  edges.value.map((e) => `${e.source}>${e.target}:${e.targetHandle}:${e.data.kind === 'control'
+    ? e.data.when : `${e.data.index}:${e.data.attempt ?? 0}`}`).join('#'),
 ].join('||'))
 watch(authored, decorate)
 
@@ -279,10 +342,12 @@ function toGraph() {
       ...(n.data.repeat > 1 ? { repeat: n.data.repeat } : {}),
       position: { x: Math.round(n.position.x), y: Math.round(n.position.y) },
     })),
-    edges: edges.value.map((e) => ({
-      from: e.source, out: e.sourceHandle, to: e.target, in: e.targetHandle, index: e.data.index ?? 0,
-      ...(e.data.attempt ? { attempt: e.data.attempt } : {}),
-    })),
+    edges: edges.value.map((e) => e.data.kind === 'control'
+      ? { from: e.source, to: e.target, kind: 'control', when: e.data.when }
+      : ({
+        from: e.source, out: e.sourceHandle, to: e.target, in: e.targetHandle, index: e.data.index ?? 0,
+        ...(e.data.attempt ? { attempt: e.data.attempt } : {}),
+      })),
   }
 }
 
@@ -294,7 +359,8 @@ function fromGraph(g, tplById) {
                      changed: [], pickIdx: 0, retries: n.retries || 0, on_error: n.on_error || 'stop',
                      repeat: n.repeat || 1 } }
   })
-  edges.value = (g.edges || []).map((e) => mkEdge(e.from, e.out, e.to, e.in, e.index ?? 0, e.attempt ?? 0))
+  edges.value = (g.edges || []).map((e) => e.kind === 'control' ? mkCtl(e.from, e.to, e.when)
+    : mkEdge(e.from, e.out, e.to, e.in, e.index ?? 0, e.attempt ?? 0))
 }
 
 async function loadFlows() {
@@ -307,6 +373,7 @@ async function open(id) {
   flowId.value = f.id
   flowName.value = f.name
   fromGraph(f.graph, Object.fromEntries(templates.value.map((x) => [x.id, x])))
+  refit()
   run.value = null
   err.value = ''
   dirty.value = false
@@ -468,7 +535,7 @@ onBeforeUnmount(() => { stop(); ro?.disconnect(); clearTimeout(roTimer) })
         </div>
       </aside>
 
-      <div class="stage" ref="stageEl">
+      <div class="stage" :class="{ fitting }" ref="stageEl">
         <VueFlow
           v-model:nodes="nodes"
           v-model:edges="edges"
@@ -508,12 +575,18 @@ onBeforeUnmount(() => { stop(); ro?.disconnect(); clearTimeout(roTimer) })
 
           <Panel v-if="pickedEdge" position="top-center" class="wire">
             <span class="wt">{{ edgeEnds }}</span>
-            <label class="wl">{{ t.canvasFrame }}
-              <NumberField v-model="pickedFrame" :min="1" :max="pickedMax" :label="t.canvasFrame" />
+            <label v-if="pickedEdge.data.kind === 'control'" class="wl">{{ t.canvasWhen }}
+              <Select :model-value="pickedEdge.data.when" :options="whenOptions" :label="t.canvasWhen"
+                      @update:model-value="setWhen($event)" />
             </label>
-            <label v-if="pickedRepMax > 1" class="wl">{{ t.canvasAttempt }}
-              <NumberField v-model="pickedAttempt" :min="1" :max="pickedRepMax" :label="t.canvasAttempt" />
-            </label>
+            <template v-else>
+              <label class="wl">{{ t.canvasFrame }}
+                <NumberField v-model="pickedFrame" :min="1" :max="pickedMax" :label="t.canvasFrame" />
+              </label>
+              <label v-if="pickedRepMax > 1" class="wl">{{ t.canvasAttempt }}
+                <NumberField v-model="pickedAttempt" :min="1" :max="pickedRepMax" :label="t.canvasAttempt" />
+              </label>
+            </template>
             <span v-if="pickedName" class="wf">{{ pickedName }}</span>
             <button class="ghost sm" @click="delEdge(pickedEdge.id)">{{ t.canvasDelWire }}</button>
             <button class="ghost sm" :title="t.close" @click="selEdge = null">✕</button>

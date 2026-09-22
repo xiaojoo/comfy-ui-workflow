@@ -23,8 +23,18 @@
 .vue-flow__handle:hover { background: var(--accent-2); }
 .vue-flow__handle.valid { background: var(--ok); border-color: var(--ok); }
 .vue-flow__handle.invalid { background: var(--bad); border-color: var(--bad); }
+/* The condition sockets: dashed and amber, because a wire from them carries a condition
+   and no picture. Not rotated -- the library positions handles with a transform. */
+.vue-flow__handle.ctl { border-style: dashed; border-color: var(--warn); background: transparent; }
+.vue-flow__handle.ctl:hover { background: var(--warn); }
+.vue-flow__edge.ctl path { stroke: var(--warn); stroke-dasharray: 5 4; }
+.vue-flow__edge.ctl .vue-flow__edge-text { fill: var(--warn); }
 
 .vue-flow__node { cursor: grab; }
+/* While a reopened canvas is being fitted, the cards would otherwise be visible at their
+   un-fitted place for ~180ms. Only the transformation pane: the zoom toolbar is a Panel and
+   stays put. */
+.stage.fitting .vue-flow__transformationpane { opacity: 0; }
 .vue-flow__node.dragging { cursor: grabbing; }
 .vue-flow__node-step { background: transparent; border: none; padding: 0; font-size: inherit; }
 .vue-flow__nodesselection-rect, .vue-flow__selection { background: #2f6bff14; border: 1px solid var(--accent); }
