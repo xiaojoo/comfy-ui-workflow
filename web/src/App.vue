@@ -3,6 +3,7 @@ import { computed } from 'vue'
 import { useRoute } from 'vue-router'
 import { useI18n } from './i18n'
 import EngineStatus from './components/EngineStatus.vue'
+import Toast from './components/Toast.vue'
 
 const { t, lang, toggle } = useI18n()
 const route = useRoute()
@@ -49,5 +50,6 @@ const ICONS = {
       </nav>
       <main class="content"><RouterView /></main>
     </div>
+    <Toast />
   </div>
 </template>

@@ -110,7 +110,11 @@ function openAt(i) {
 const bigTitle = computed(() => props.templates?.find((x) => x.id === big.value?.template)?.name
   || big.value?.template)
 
-const line = computed(() => (props.runs || []).map((r) => ({ id: r.id, run: r, task: full[r.id] || null })))
+// A run whose figures are all gone leaves the line instead of holding a placeholder:
+// the task row stays in 最近任务, but this line is for things that still exist. An
+// unread row stays -- until it has been read there is no evidence either way.
+const line = computed(() => (props.runs || []).map((r) => ({ id: r.id, run: r, task: full[r.id] || null }))
+  .filter((x) => !x.task || filesOf(x.task).length))
 const nameOf = (row) => props.templates?.find((x) => x.id === (row.task?.template || row.run.template))?.name
   || row.run.template
 // The figure a tile stands for: the picked one for the selected run, the first left on
@@ -177,7 +181,9 @@ onBeforeUnmount(() => {
   io?.disconnect()
   window.removeEventListener('resize', measure)
 })
-watch(() => [props.runs?.length, tab.value], () => nextTick(observe))
+// The line also loses a tile when its last figure is deleted, which changes whether it
+// overflows at all -- so this watches the line, not the run list.
+watch(() => [line.value.length, tab.value], () => nextTick(observe))
 </script>
 
 <template>
@@ -206,7 +212,7 @@ watch(() => [props.runs?.length, tab.value], () => nextTick(observe))
                 <img v-else-if="cover(row) && kindOf(cover(row)) === 'image'" :src="cover(row).url"
                      :alt="cover(row).filename" loading="lazy" />
                 <span v-else-if="cover(row)" class="ext">{{ extOf(cover(row)) }}</span>
-                <span v-else class="none">{{ row.task ? t.deletedRun : t.loading }}</span>
+                <span v-else class="none">{{ t.loading }}</span>
                 <span v-if="cover(row) && kindOf(cover(row)) === 'video'" class="play">▶</span>
 
                 <div v-if="cover(row)" class="corner">

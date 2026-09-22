@@ -2,6 +2,7 @@
 import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
 import { api } from '../api'
 import { useI18n } from '../i18n'
+import { notify } from '../toast'
 import ModelView from './ModelView.vue'
 
 // `task` is the row the files came from: with it the view offers permanent removal,
@@ -46,9 +47,11 @@ const oops = ref('')
 async function drop() {
   busy.value = true
   oops.value = ''
+  const f = file.value
   try {
-    emit('deleted', await api.deleteOutput(props.task, { index: file.value.i, filename: file.value.filename }))
+    emit('deleted', await api.deleteOutput(props.task, { index: f.i, filename: f.filename }))
     ask.value = false
+    notify(`${t.value.delDone} ${f.filename}`)
   } catch (e) {
     oops.value = `${e.status ?? ''} ${e.message}`
   } finally {

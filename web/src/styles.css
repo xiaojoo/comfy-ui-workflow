@@ -432,6 +432,17 @@ button.del { background: var(--bad); border-color: var(--bad); }
    hover, so a permanent action does not shout next to download and close. */
 .iconbtn.del { background: #0b1428d9; border-color: var(--line-2); color: var(--fg); }
 .iconbtn.del:hover { color: var(--bad); border-color: var(--bad); }
+
+/* ------------------------------------------------------------- toasts */
+/* Above the overlay (80): the news often arrives as the overlay is closing itself.
+   Below the sticky topbar (58px) rather than on top of it. */
+.toasts { position: fixed; z-index: 90; inset: 74px 0 auto; display: grid; gap: 8px;
+          justify-items: center; pointer-events: none; }
+.toast { max-width: min(520px, 84vw); padding: 8px 14px; border-radius: 8px; font-size: 12.5px;
+         color: var(--fg); background: #0b1428f2; border: 1px solid var(--line-2);
+         box-shadow: 0 10px 30px #05070f99; pointer-events: auto; cursor: pointer; }
+.toast-enter-active, .toast-leave-active { transition: opacity .16s ease, transform .16s ease; }
+.toast-enter-from, .toast-leave-to { opacity: 0; transform: translateY(-6px); }
 .lbbox .lbpos { opacity: .72; }
 /* The corner tools answer to the pointer: the figure stays the picture until he asks
    for something done to it. Hidden also means unclickable, not just transparent. */
@@ -621,13 +632,20 @@ figcaption { font-family: var(--mono); font-size: 10px; color: var(--muted); mar
 .flowbar .rstate.running { color: var(--accent-2); }
 .flowbar .rstate.done b { color: var(--ok); }
 
+/* Two tracks: palette | stage. The step's parameters overlay the stage's right edge
+   instead of taking a third track -- a reserved track read as dead space when nothing was
+   picked, and a track that appears is the re-flow he rejected (the stage measured
+   1240px → 820px while the panel slid in). An overlay costs neither: the stage never
+   changes size, and the panel is gone until a step is clicked. */
 .flowpage { display: grid; grid-template-columns: 232px minmax(0, 1fr); gap: 0; flex: 1 1 auto;
             min-height: 0; border: 1px solid var(--line); background: var(--panel); }
 /* Grid items are min-content floored by default, which is what let the palette rows
    stretch the row instead of scrolling inside their own column. */
 .flowpage > * { min-height: 0; }
-.flowpage.drawer { grid-template-columns: 232px minmax(0, 1fr) 420px; }
-.flowpage .drawer { max-height: none; }
+/* Square and flush on three edges: it is a layer of the canvas, not a card on top of it.
+   The slide survives because a transform re-paints without re-laying-out anything. */
+.stage .drawer { position: absolute; z-index: 5; top: 0; right: 0; bottom: 0; width: 420px;
+                 max-height: none; border: 0; border-left: 1px solid var(--line); border-radius: 0; }
 
 .palette { display: flex; flex-direction: column; gap: 8px; min-width: 0; padding: 10px;
            border-right: 1px solid var(--line); background: var(--bg-2); }
