@@ -19,7 +19,7 @@ export default defineConfig({
     // /comfy/view serves the generated PNGs straight from the engine -- proxying
     // keeps the origin single so the app never learns ComfyUI's host.
     proxy: {
-      ...Object.fromEntries(['/batches', '/health', '/tasks', '/models', '/templates', '/storage', '/flows', '/workflow']
+      ...Object.fromEntries(['/batches', '/health', '/tasks', '/models', '/templates', '/storage', '/flows', '/workflow', '/covers']
         .map((p) => [p, { target: backend, bypass: serveApp }])),
       '/comfy': { target: comfy, rewrite: (p) => p.replace(/^\/comfy/, '') },
     },

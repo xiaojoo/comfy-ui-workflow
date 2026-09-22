@@ -27,7 +27,15 @@ const THUMBS = { icon_flat: ['/thumbs/icon_flat.png'], icon_brand_tech: ['/thumb
                  icon_batch: ['/thumbs/batch_bell.png', '/thumbs/batch_cloud.png',
                               '/thumbs/batch_arrow_up.png', '/thumbs/batch_trash.png'],
                  char_portrait: ['/thumbs/char_portrait.png'], char_video: ['/thumbs/char_video.png'] }
-const thumb = (id) => THUMBS[id] || []
+// A cover the person pinned wins over everything; then the shipped art; then the row's own
+// newest picture, which is what fills the rows that never had either.
+const thumb = (x) => x.cover_pinned ? [x.cover]
+  : THUMBS[x.id]?.length ? THUMBS[x.id] : x.cover ? [x.cover] : []
+// The automatic cover points at a file in the engine's output directory, and that directory
+// is one the result track can empty. A tile that failed to load is dropped rather than left
+// showing the browser's broken-image glyph.
+const broken = ref([])
+const shownThumbs = (x) => thumb(x).filter((u) => !broken.value.includes(u))
 
 const cats = computed(() => ['all', ...new Set(templates.value.map((x) => x.category))])
 const shown = computed(() => templates.value.filter((x) => {
@@ -143,9 +151,16 @@ function setRoute(id) {
   err.value = ''
 }
 
+// A name, note or cover is stored on the server, so the cards only change once the rows are
+// re-read. `picked` is re-pointed at the fresh row: the drawer is showing that same workflow,
+// and a header that keeps the old label after a save reads as a save that did nothing.
+async function refreshTemplates() {
+  templates.value = (await api.templates()).templates
+  if (picked.value) picked.value = templates.value.find((x) => x.id === picked.value.id) || picked.value
+}
+
 let timer = null
-async function boot() {
-  try {
+async function boot() {  try {
     const [m, tp] = await Promise.all([api.models(), api.templates()])
     models.value = m
     templates.value = tp.templates
@@ -190,8 +205,9 @@ onBeforeUnmount(() => clearInterval(timer))
           <div class="cards">
             <article v-for="x in shown" :key="x.id" class="tpl" :class="{ on: drawer && picked?.id === x.id }"
                      @click="choose(x)">
-              <div class="shots" :class="{ multi: thumb(x.id).length > 1 }">
-                <img v-for="u in thumb(x.id)" :key="u" :src="u" :alt="x.name" />
+              <div class="shots" :class="{ multi: shownThumbs(x).length > 1 }">
+                <img v-for="u in shownThumbs(x)" :key="u" :src="u" :alt="x.name" loading="lazy"
+                     @error="broken = [...broken, u]" />
               </div>
               <h3><span class="nm">{{ x.name }}</span><i v-if="drawer && picked?.id === x.id" class="tick">✓</i></h3>
               <p>{{ x.desc }}</p>
@@ -211,8 +227,8 @@ onBeforeUnmount(() => clearInterval(timer))
       </div>
 
       <ParamPanel v-if="drawer && picked" :template="picked" :params="params" :models="models?.catalog"
-                  :ref-shot="refShot" :routes="videoRoutes" :busy="busy" :err="err"
-                  @submit="submit" @route="setRoute" @close="drawer = false" />
+                  :ref-shot="refShot" :routes="videoRoutes" :busy="busy" :err="err" :cover-shot="thumb(picked)[0]"
+                  @submit="submit" @route="setRoute" @meta="refreshTemplates" @close="drawer = false" />
     </div>
   </div>
 </template>

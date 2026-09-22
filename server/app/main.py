@@ -6,14 +6,17 @@ goes blind -- a dependency changes, a metric stops discriminating -- the service
 must refuse to serve rather than hand out confident-looking PASSes.
 """
 
+from base64 import b64decode
 from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Query
+from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import select
 
 from . import comfy, comfy_export, flows, gates, runner, tasks, templates
+from . import workflow_meta as meta
 from .config import COMFY_OUTPUT_ROOT, FIXTURES
 from .db import init_db
 from .gates import Kit
@@ -175,7 +178,12 @@ def models():
 
 @app.get("/templates")
 def template_list():
-    return {"templates": templates.public()}
+    """The registry with whatever a person overrode on each row folded in.
+
+    Merged here rather than fetched by the page separately: a card needs its name and its
+    cover in the same paint, and two calls would show one without the other.
+    """
+    return {"templates": meta.merge(templates.public())}
 
 
 class ExportIn(BaseModel):
@@ -194,6 +202,56 @@ def export_workflow(body: ExportIn):
 def push_workflow(body: ExportIn):
     """Put that file where ComfyUI keeps its own workflows, so its tab can load it."""
     return comfy_export.push(body.template, body.params)
+
+
+# ---------------------------------------------------------------- row appearance
+#
+# Name, note and cover are the three things a person may want to change about a row without
+# touching the graph behind it. They live in their own table so the registry stays the
+# single source of what a workflow *does*, and every field falls back to it when unset.
+
+class MetaIn(BaseModel):
+    name: str = Field(default="", max_length=60)
+    desc: str = Field(default="", max_length=400)
+
+
+@app.put("/workflow/{tpl_id}/meta")
+def set_workflow_meta(tpl_id: str, body: MetaIn):
+    return meta.save(tpl_id, body.name, body.desc)
+
+
+class CoverIn(BaseModel):
+    filename: str = Field(default="cover", max_length=200)
+    # A data: URL, not multipart: FastAPI would need python-multipart for that, and a new
+    # runtime dependency to move one small picture is not worth it.
+    image: str = Field(min_length=32)
+
+
+@app.post("/workflow/{tpl_id}/cover")
+def set_workflow_cover(tpl_id: str, body: CoverIn):
+    """The picture becomes this row's cover; the bytes are stored, not referenced."""
+    head, _, data = body.image.partition(",")
+    if ";base64" not in head or not data:
+        raise HTTPException(422, "封面要的是 data:image/…;base64 形式的图片")
+    try:
+        raw = b64decode(data, validate=True)
+    except Exception:
+        raise HTTPException(422, "封面图片解码失败，换一张试试")
+    return meta.set_cover(tpl_id, body.filename, raw)
+
+
+@app.delete("/workflow/{tpl_id}/cover")
+def clear_workflow_cover(tpl_id: str):
+    return meta.clear_cover(tpl_id)
+
+
+@app.get("/covers/{tpl_id}")
+def workflow_cover(tpl_id: str):
+    """The stored copy. The version query on the URL is what makes a replacement redraw."""
+    p = meta.cover_path(tpl_id)
+    if p is None:
+        raise HTTPException(404, "这条工作流没有固定封面")
+    return FileResponse(p)
 
 
 @app.post("/tasks", status_code=202)

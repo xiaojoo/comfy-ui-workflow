@@ -122,3 +122,27 @@ class FlowRun(Base):
     error: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=now)
     finished_at: Mapped[datetime | None] = mapped_column(DateTime)
+
+
+class WorkflowMeta(Base):
+    """What a person changed about a workflow row: its display name, its note, its cover.
+
+    The registry in templates.py stays the source of the graph and the defaults -- this only
+    carries the three things the UI lets them set, keyed by template id, so a template that
+    is renamed in code still runs and an override that is dropped in the drawer falls back
+    to that code default rather than showing nothing.
+
+    The cover is a filename under work/covers, not the result it came from: a generated
+    picture can be permanently deleted from the output directory, and a card that breaks
+    because of something done three weeks earlier in the result track is not a cover.
+    """
+
+    __tablename__ = "workflow_meta"
+
+    template: Mapped[str] = mapped_column(String, primary_key=True)
+    # One pair for both languages: the row is a person's own label, and the English toggle
+    # switches the built-in copy, not what they typed here.
+    name: Mapped[str | None] = mapped_column(String)
+    desc: Mapped[str | None] = mapped_column(Text)
+    cover: Mapped[str | None] = mapped_column(String)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=now, onupdate=now)

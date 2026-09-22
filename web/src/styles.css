@@ -25,6 +25,9 @@
   /* 260px is the floor, 1fr is the point: a row shares whatever a dropped card left
      behind, so the grid never strands a band of empty space at its right edge. */
   --card-w: 206px;
+  /* The scrollbar is 10px because this file says so, not because the platform does; the
+     drawer pays for it on one side only, so it subtracts it from its own right padding. */
+  --sb: 10px;
 }
 
 * { box-sizing: border-box; }
@@ -37,7 +40,7 @@ html { overflow-x: clip; }
 /* The platform scrollbar brings its own light track, which reads as a grey band
    against these dark panels. Thumb only: transparent track, inset so it never touches
    the panel edge, and it appears on hover of the scrollable area. */
-::-webkit-scrollbar { width: 10px; height: 10px; background: transparent; }
+::-webkit-scrollbar { width: var(--sb); height: var(--sb); background: transparent; }
 ::-webkit-scrollbar-track, ::-webkit-scrollbar-corner { background: transparent; }
 ::-webkit-scrollbar-thumb { background: var(--line-2); border: 3px solid transparent;
                             border-radius: 99px; background-clip: content-box; }
@@ -142,15 +145,19 @@ a { color: inherit; text-decoration: none; }
 .dhead { display: grid; grid-template-columns: 34px minmax(0, 1fr) auto; gap: 8px 10px;
          align-items: center; padding: 14px 15px; border-bottom: 1px solid var(--line); }
 .dico { display: grid; place-items: center; width: 34px; height: 34px; border-radius: 9px;
-        background: #16264d; color: var(--accent-2); font-size: 15px; }
+        background: #16264d; color: var(--accent-2); font-size: 15px; overflow: hidden; }
+.dico img { width: 100%; height: 100%; object-fit: cover; display: block; }
 .dname { margin: 0; font-size: 14px; display: flex; align-items: center; gap: 8px;
          text-transform: none; letter-spacing: 0; color: var(--fg); }
 .ddesc { grid-column: 1 / -1; margin: 0; font-size: 11.5px; color: var(--muted); line-height: 1.45; }
 .dtabs { display: flex; gap: 4px; padding: 0 15px; }
 /* padding-top 0: the gap the tab row sees is .drawer's own 16px flex gap.
    scrollbar-gutter keeps that 10px from being handed back to the content when a
-   shorter view drops the scrollbar -- otherwise the right-aligned 复制/下载 jump. */
-.dbody { padding: 0 15px 16px; overflow-y: auto; scrollbar-gutter: stable; }
+   shorter view drops the scrollbar -- otherwise the right-aligned 复制/下载 jump. The
+   gutter is carved out of the padding box, so it lands on the right side only: the
+   right padding gives back exactly what the gutter takes, which puts the content 15px
+   from both edges and lines it up with the header and tab row above it. */
+.dbody { padding: 0 calc(15px - var(--sb)) 16px 15px; overflow-y: auto; scrollbar-gutter: stable; }
 
 @media (max-width: 1240px) {
   .split.open { grid-template-columns: minmax(0, 1fr); }
@@ -337,6 +344,22 @@ button.fav { border-color: var(--warn); color: var(--warn); }
 .adv { display: grid; grid-template-columns: 1fr; gap: 8px; padding: 10px; border: 1px solid var(--line); border-radius: 8px; margin-bottom: 10px; }
 .adv .inrow { margin: 0; display: grid; grid-template-columns: 74px minmax(0, 1fr); align-items: center; gap: 8px; }
 .adv .inrow input, .adv .inrow .num, .adv .inrow .sel { margin-top: 0; }
+
+/* The row's own label and cover. The picker is the .ff control the parameter form already
+   uses, so an upload here looks like every other upload in the app. */
+.metawrap { display: flex; flex-direction: column; gap: 10px; }
+.metawrap button.go { margin: auto 0 0; }
+/* A textarea left inline sits on the line's baseline and drags ~5px of descender space
+   below itself, so every block after 说明 reads looser than the one after 名称. */
+.metawrap textarea { display: block }
+/* Only a pinned cover has anything to clear, and the column would otherwise stretch the
+   small button across the whole panel. */
+.cover-clear { align-self: flex-start; }
+/* The cover square is the .ff preview with nothing behind the click -- there is no larger
+   view to open here -- so it hands back the pointer cursor and the hover border that
+   would promise one. */
+.ff-prev.cover-prev { cursor: default; }
+.ff-prev.cover-prev:hover { border-color: var(--line-2); }
 
 /* The workflow file is the drawer's one read-only view. It scrolls on its own: a 700-line
    graph must not push 复制 / 下载 past the bottom of the panel. */

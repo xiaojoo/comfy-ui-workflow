@@ -8,10 +8,13 @@ import FileField from './FileField.vue'
 
 const props = defineProps({ template: Object, params: Object, models: Object, refShot: Object,
                            routes: Array, busy: Boolean, err: String,
+                           // The card's own cover, handed over so the header shows the same
+                           // picture the row shows rather than a second choice of its own.
+                           coverShot: String,
                            // The canvas uses this panel as a plain parameter form: ▶ 生成
                            // there would start one step of a chain nobody asked to run alone.
                            showRun: { type: Boolean, default: true } })
-const emit = defineEmits(['submit', 'close', 'route', 'del'])
+const emit = defineEmits(['submit', 'close', 'route', 'del', 'meta'])
 const { t } = useI18n()
 
 const tab = ref('basic')
@@ -103,13 +106,13 @@ async function openInComfy() {
   }
   waiting = r.path
   const origin = new URL(r.comfy_url).origin
-  const tab = window.open(r.comfy_url, 'comfyui-studio')
+  const win = window.open(r.comfy_url, 'comfyui-studio')
   // A tab that was not open yet has no listener when we first post, so keep posting until it
   // answers. The extension reloads the same file on a duplicate post, which costs nothing.
   let tries = 0
   clearInterval(pings)
   pings = setInterval(() => {
-    if (!tab || tab.closed) { clearInterval(pings); pings = null; comfy.value = 'fail'; comfyMsg.value = t.value.jsonOpenHint; return }
+    if (!win || win.closed) { clearInterval(pings); pings = null; comfy.value = 'fail'; comfyMsg.value = t.value.jsonOpenHint; return }
     if (comfy.value === 'ok') { clearInterval(pings); pings = null; return }
     if (++tries > 25) {
       clearInterval(pings)
@@ -118,14 +121,106 @@ async function openInComfy() {
       comfyMsg.value = t.value.jsonOpenHint
       return
     }
-    tab.postMessage({ type: 'studio:load', path: r.path }, origin)
+    win.postMessage({ type: 'studio:load', path: r.path }, origin)
   }, 400)
 }
 
-watch(tab, (v) => { if (v === 'json' && !wf.value) load() })
+// ------------------------------------------------------- the row's own label and cover
+// Name, note and cover are stored on the server against the template id; the registry's own
+// copy stays underneath them, so clearing a field falls back to it rather than to blank.
+const meta = ref({ name: '', desc: '' })
+const metaBusy = ref(false)
+const metaMsg = ref(''), metaErr = ref('')
+const coverEl = ref(null)
+// The header tile falls back to the mark when the cover it was given cannot be shown --
+// the engine's output directory is one the result track can empty.
+const icoBroken = ref(false)
+watch(() => props.coverShot, () => { icoBroken.value = false })
+// What the box is named after: the file chosen a moment ago, or the one the server says this
+// row's cover is -- the stored upload, or the result picture the row fell back to.
+const picked = ref('')
+const coverBroken = ref(false)
+const coverName = computed(() => picked.value || props.template?.cover_name || '')
+watch(() => props.template?.cover, () => { coverBroken.value = false })
+
+function fillMeta() {
+  // The row already carries the effective text (override if there is one, registry copy
+  // otherwise), so the boxes open with something editable in them rather than a grey hint
+  // the person has to replace by hand.
+  meta.value = { name: props.template?.name || '', desc: props.template?.desc || '' }
+  picked.value = ''
+  metaMsg.value = metaErr.value = ''
+}
+
+async function sendCover(file) {
+  if (!file) return
+  metaBusy.value = true
+  metaErr.value = ''
+  try {
+    // A data: URL in the same JSON body every other call uses: multipart would cost a new
+    // server dependency to move one small picture.
+    await api.setCover(props.template.id, { filename: file.name, image: await dataUrl(file) })
+    picked.value = file.name    // the bytes land under the row's own id; the name they came in with stays
+    metaMsg.value = t.value.metaCoverSet
+    emit('meta')
+  } catch (e) {
+    metaErr.value = e.message
+  } finally {
+    metaBusy.value = false
+  }
+}
+
+function dataUrl(file) {
+  return new Promise((ok, no) => {
+    const r = new FileReader()
+    r.onload = () => ok(r.result)
+    r.onerror = () => no(new Error(t.value.readFail))
+    r.readAsDataURL(file)
+  })
+}
+
+function onCoverPick(e) {
+  sendCover(e.target.files?.[0])
+  e.target.value = ''      // so choosing the same file twice still fires a change
+}
+
+function onCoverDrop(e) {
+  sendCover(e.dataTransfer?.files?.[0])
+}
+
+async function saveMeta() {
+  metaBusy.value = true
+  try {
+    await api.workflowMeta(props.template.id, meta.value)
+    metaMsg.value = t.value.metaSaved
+    metaErr.value = ''
+    emit('meta')
+  } catch (e) {
+    metaErr.value = e.message
+  } finally {
+    metaBusy.value = false
+  }
+}
+
+async function dropCover() {
+  metaBusy.value = true
+  try {
+    await api.clearCover(props.template.id)
+    picked.value = ''
+    metaMsg.value = t.value.metaCoverCleared
+    metaErr.value = ''
+    emit('meta')
+  } catch (e) {
+    metaErr.value = e.message
+  } finally {
+    metaBusy.value = false
+  }
+}
+
+watch(tab, (v) => { if (v === 'json' && !wf.value) load(); if (v === 'meta') fillMeta() })
+watch(() => props.template?.id, () => { wf.value = null; load(); if (tab.value === 'meta') fillMeta() })
 watch(fmt, () => { wf.value = null; load() })
 watch(() => props.params, load, { deep: true })
-watch(() => props.template?.id, () => { wf.value = null; load() })
 onBeforeUnmount(() => clearTimeout(timer))
 // The template's own resolution is always offered: a video graph runs at 832x480,
 // which is not a picture size anyone would pick for an icon, and omitting it left
@@ -223,7 +318,10 @@ function go() {
 <template>
   <aside class="drawer">
     <header class="dhead">
-      <span class="dico">◈</span>
+      <span class="dico">
+        <img v-if="coverShot && !icoBroken" :src="coverShot" :alt="template.name" @error="icoBroken = true" />
+        <template v-else>◈</template>
+      </span>
       <h2 class="dname">{{ template.name }}<span class="chip">{{ template.model }}</span></h2>
       <button class="icon ghost" :title="t.close" @click="emit('close')">✕</button>
       <p class="ddesc">{{ template.desc }}</p>
@@ -237,6 +335,9 @@ function go() {
       </button>
       <button v-if="showRun" class="ghost sm" :class="{ on: tab === 'json' }" @click="tab = 'json'">
         {{ t.drawerJson }}
+      </button>
+      <button v-if="showRun" class="ghost sm" :class="{ on: tab === 'meta' }" @click="tab = 'meta'">
+        {{ t.drawerMeta }}
       </button>
     </div>
     <p v-if="comfy === 'ok' || comfy === 'fail'" class="jmeta dstatus" :class="{ warn: comfy === 'fail' }">
@@ -329,6 +430,41 @@ function go() {
         </label>
       </template>
 
+      <div v-else-if="tab === 'meta'" class="metawrap">
+        <label>{{ t.metaName }}
+          <input v-model="meta.name" :maxlength="60" />
+        </label>
+        <label class="counted">{{ t.metaDesc }}
+          <textarea v-model="meta.desc" rows="3" :maxlength="400" />
+          <small class="count">{{ meta.desc.length }} / 400</small>
+        </label>
+
+        <!-- 封面 is a field label like the two above it, not a section heading: the picker sits
+             under the word the same way the name box sits under 名称. -->
+        <label class="coverfield">{{ t.metaCover }}
+          <span class="ff" :class="{ busy: metaBusy }">
+            <button type="button" class="ghost ff-pick" :disabled="metaBusy" :title="coverName || t.metaCoverPick"
+                    @click="coverEl?.click()" @dragover.prevent @drop.prevent="onCoverDrop">
+              <span class="ff-name">{{ metaBusy ? t.uploading : (coverName || t.metaCoverChoose) }}</span>
+              <span class="ff-hint">{{ t.dropHere }}</span>
+            </button>
+            <span class="ff-prev cover-prev">
+              <img v-if="template.cover && !coverBroken" :src="template.cover" :alt="t.metaCover"
+                   @error="coverBroken = true" />
+              <span v-else class="ff-glyph">＋</span>
+            </span>
+            <input ref="coverEl" class="ff-input" type="file" accept="image/*"
+                   :aria-label="t.metaCover" @change="onCoverPick" />
+          </span>
+        </label>
+        <button v-if="template.cover_pinned" class="ghost sm cover-clear" :disabled="metaBusy" @click="dropCover">
+          {{ t.metaCoverClear }}
+        </button>
+        <p v-if="metaMsg" class="jmeta">{{ metaMsg }}</p>
+        <p v-if="metaErr" class="drift">{{ metaErr }}</p>
+        <button class="go" :disabled="metaBusy" @click="saveMeta">{{ t.metaSave }}</button>
+      </div>
+
       <div v-else-if="tab === 'json'" class="jsonwrap">
         <div class="jbar">
           <button class="ghost sm" :class="{ on: fmt === 'ui' }" @click="fmt = 'ui'">{{ t.jsonUi }}</button>
@@ -356,8 +492,12 @@ function go() {
       </div>
 
       <p v-if="needPrompt" class="drift">{{ t.needPrompt }}</p>
-      <button v-if="showRun" class="go" :disabled="busy" @click="go">▶ {{ busy ? t.generating : goLabel }}</button>
-      <button v-else class="ghost delstep" @click="emit('del')">{{ t.canvasDelStep }}</button>
+      <!-- 设置 has its own action at the bottom of the tab; a second full-width button under
+           it would be two things to press at the same spot. -->
+      <button v-if="showRun && tab !== 'meta'" class="go" :disabled="busy" @click="go">
+        ▶ {{ busy ? t.generating : goLabel }}
+      </button>
+      <button v-else-if="tab !== 'meta'" class="ghost delstep" @click="emit('del')">{{ t.canvasDelStep }}</button>
     </div>
   </aside>
 </template>
