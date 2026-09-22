@@ -58,6 +58,30 @@
   不能取消，只能等那一步按自己的时限超时；高清后的 3328×4864 当视频首帧会被 H3 拉成 480×864
   （不裁切，比例不同会压扁），要保原图构图就跳过中间那一跳直接用人物图。
 
+- **点一下就能把这条工作流摆进 ComfyUI 画布**：抽屉里的「在 ComfyUI 打开」先走 `/workflow/push`，
+  把同一份 UI 格式文件写进引擎自己的 `user/default/workflows/studio/`（`POST /userdata/workflows%2F…`，
+  实测子目录必须编进文件名，`?dir=` 在写入时被忽略），再开 ComfyUI 标签并 postMessage 让它加载。
+  ComfyUI 侧是一小段前端扩展 `custom_nodes/studio_loader/`（官方扩展点，`nodes.py:2295` 要求节点包
+  至少声明一个映射表，所以那里放了个空的），它同源读那个文件、`loadGraphData` 装上，再回一条
+  `studio:loaded` —— 界面上的「已在 ComfyUI 打开 · N 个节点」就是这条回执，不是乐观提示。
+  实测：`char_portrait` 从点击到回执 13s 内完成（含新标签启动），画布 9 个节点、0 堆叠；
+  坏路径回 `studio:failed|HTTP 404`。**跨标签直接注入在浏览器同源策略下不可能**，
+  而 1.53.6 前端的路由表里没有"按名字打开工作流"的 URL（112 个脚本 14.8MB 全扫过，
+  只有 `filename/subfolder/type` 三个参数），所以这一小段扩展是"一键"的代价，不是可选装饰。
+- **每条工作流都能导出成 ComfyUI 自己打得开的文件**：右侧抽屉多一个「工作流 JSON」页签，
+  里面就是这一行**将要提交的那张图**（参数按抽屉当前值写入），带节点坐标、连线记录与控件值 ——
+  ComfyUI 的 UI/LiteGraph 格式，拖进画布即用，不是 `icon-pipeline/workflows/*.json` 那种
+  `POST /prompt` 用的 API 格式（拖进去要靠前端反推布局，节点会堆在一起）。
+  14 行全部在真引擎上验过：`/workflow/export` 出来的文件 → 用真实 drop 事件丢进
+  ComfyUI 0.37.0 + frontend 1.53.6 → 节点数一致、**零重叠、零报错节点**，再让前端
+  `graphToPrompt()` 吐回来与本项目的 API 图逐键相等（只差引擎自己补的缺省控件值）。
+  `icon_flat` 这一张拖进去后**真的按了 Run**：`execution_success`，产出 `studio/icon_00001_.png`，
+  17.6s。转换器与前端自己的序列化对表（`.probe/export_check.py`，9 张图 0 项结构差异），
+  四条格式怪癖由 `server/tests/test_export.py` 钉住。**已知不足**：导出的是单条工作流，
+  画布上的多步链不会合成一张 ComfyUI 大图（几套权重同时驻留会顶破 15.5 GiB，见 `models.py`
+  里 `Flow` 的说明），要一份一份拖；图/视频/ref 槽还没选文件时导出的节点是空的，
+  面板会列出是哪几个槽，拖进去后在节点里补选即可。
+
 细节、实测数字和已知缺点见 [icon-pipeline/README.md](icon-pipeline/README.md)。
 
 ## 怎么用
@@ -76,7 +100,7 @@ bash tools/run_d0.sh                                   # 抠图→纯色背景�
 ```bash
 cd server && .venv/Scripts/python.exe -m uvicorn app.main:app --port 8191   # 后端
 cd web && npm install && npm run dev                                        # 界面 http://localhost:5180
-cd server && .venv/Scripts/python.exe -m pytest tests -q                    # 52 项验收
+cd server && .venv/Scripts/python.exe -m pytest tests -q                    # 62 项验收
 ```
 
 工作流画布在左侧导航「工作流画布」：左边点模板加入步骤 → 从卡片右边的方块端口拖到下一张卡片左边的端口
@@ -101,6 +125,14 @@ cd server && .venv/Scripts/python.exe -m pytest tests -q                    # 52
 显存最低只剩 **0.49 GiB**——这台机器上先撞的是卡，不是 WSL 配额。
 对照：把完全相同的图重提一次，`seconds` 报 0.0 且**产物文件名不前进**（`qwen_image_00025_.png`
 被两行任务共用）——这就是缓存命中，所以耗时数字必须换 seed 并核对文件名。
+
+要拿去 ComfyUI 里手改：点开卡片 → 右侧抽屉第三个页签「工作流 JSON」→ 紧跟在它后面的「在 ComfyUI 打开」
+直接把它装进引擎画布（新标签，等它启动完自动出现这张图）；下面一排两个小按钮切「ComfyUI 文件 / 提交用的 API」，
+右边是复制与下载（文件名就是 `<模板 id>.json`）。改抽屉里的参数，这份文件跟着变（停手 350ms 后自动重取），
+统计行会写明几个节点几根连线、节点定义是刚从引擎读的还是用的缓存。拖进 ComfyUI 前记得先把该行的图/视频选好，
+否则那几个节点进去是空的。一键这条路依赖引擎里的 `custom_nodes/studio_loader/`：**它只在引擎启动时注册路由**
+（`server.py:1247`），所以放进去或删掉之后必须重启 ComfyUI 才认；没它的时候按钮会明说没接到回执，
+而文件已经在 `workflows/studio/` 里，从「工作流」菜单点同名项一样能打开。
 
 阈值、色板、栅格一律读 `icon-pipeline/brand-kit.example.json`，不散落在代码里。
 `?lang=en` 或右上角按钮切中英文，默认中文。

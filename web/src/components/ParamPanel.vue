@@ -1,6 +1,7 @@
 <script setup>
-import { computed, ref } from 'vue'
+import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import { useI18n } from '../i18n'
+import { api } from '../api'
 import Select from './Select.vue'
 import NumberField from './NumberField.vue'
 import FileField from './FileField.vue'
@@ -14,6 +15,118 @@ const emit = defineEmits(['submit', 'close', 'route', 'del'])
 const { t } = useI18n()
 
 const tab = ref('basic')
+
+// ---------------------------------------------------------------- the workflow file
+// The same graph POST /tasks submits, as the two files ComfyUI knows. Fetched lazily:
+// nobody who never opens the tab should pay a request per keystroke.
+const wf = ref(null), wfErr = ref(''), wfBusy = ref(false), copied = ref(false)
+const fmt = ref('ui')
+let timer = null
+
+function load() {
+  if (!props.showRun || tab.value !== 'json' || !props.template) return
+  clearTimeout(timer)
+  wfBusy.value = true
+  timer = setTimeout(async () => {
+    try {
+      wf.value = await api.exportWorkflow({ template: props.template.id, params: props.params, format: fmt.value })
+      wfErr.value = ''
+    } catch (e) {
+      wfErr.value = e.message
+    } finally {
+      wfBusy.value = false
+    }
+  }, 350)
+}
+
+const pretty = computed(() => (wf.value ? JSON.stringify(wf.value.workflow, null, 2) : ''))
+// A data: URL rather than a generated blob: the Save-As dialog gets the filename the server
+// chose, and there is no object URL left behind to revoke at the right moment.
+const href = computed(() => 'data:application/json;charset=utf-8,' + encodeURIComponent(pretty.value))
+function save() {
+  const a = document.createElement('a')
+  a.href = href.value
+  a.download = wf.value.filename
+  a.click()
+}
+const stats = computed(() => {
+  if (!wf.value) return t.value.jsonLoading
+  const s = [`${wf.value.nodes} ${t.value.jsonNodes}`, `${wf.value.links} ${t.value.jsonLinks}`]
+  if (wf.value.defs_from) {
+    s.push(wf.value.defs_from === 'engine' ? t.value.jsonFromEngine : t.value.jsonFromCache)
+  }
+  return s.join(' · ')
+})
+
+async function copy() {
+  try {
+    await navigator.clipboard.writeText(pretty.value)
+    copied.value = true
+    setTimeout(() => { copied.value = false }, 1600)
+  } catch {
+    wfErr.value = `${t.value.jsonFail}: clipboard`
+  }
+}
+
+// ------------------------------------------------------------- one click into ComfyUI
+// The engine tab is a different origin, so this page cannot load a graph into it. It writes
+// the file into ComfyUI's own workflows dir instead and asks the tab's loader extension to
+// open that path; the extension acks back, which is the only proof we get that it worked.
+const comfy = ref(''), comfyMsg = ref('')
+let waiting = null, pings = null
+
+function heard(e) {
+  const d = e.data || {}
+  if ((d.type !== 'studio:loaded' && d.type !== 'studio:failed') || d.path !== waiting) return
+  clearInterval(pings)
+  pings = null
+  comfy.value = d.type === 'studio:loaded' ? 'ok' : 'fail'
+  comfyMsg.value = d.type === 'studio:loaded' ? `${d.nodes} ${t.value.jsonNodes}` : (d.error || '')
+  if (comfy.value === 'ok') setTimeout(() => { comfy.value = '' }, 4000)
+}
+window.addEventListener('message', heard)
+onBeforeUnmount(() => {
+  window.removeEventListener('message', heard)
+  clearInterval(pings)
+})
+
+async function openInComfy() {
+  comfy.value = 'busy'
+  comfyMsg.value = ''
+  let r
+  try {
+    r = await api.pushWorkflow({ template: props.template.id, params: props.params })
+  } catch (e) {
+    comfy.value = 'fail'
+    comfyMsg.value = e.message
+    return
+  }
+  waiting = r.path
+  const origin = new URL(r.comfy_url).origin
+  const tab = window.open(r.comfy_url, 'comfyui-studio')
+  // A tab that was not open yet has no listener when we first post, so keep posting until it
+  // answers. The extension reloads the same file on a duplicate post, which costs nothing.
+  let tries = 0
+  clearInterval(pings)
+  pings = setInterval(() => {
+    if (!tab || tab.closed) { clearInterval(pings); pings = null; comfy.value = 'fail'; comfyMsg.value = t.value.jsonOpenHint; return }
+    if (comfy.value === 'ok') { clearInterval(pings); pings = null; return }
+    if (++tries > 25) {
+      clearInterval(pings)
+      pings = null
+      comfy.value = 'fail'
+      comfyMsg.value = t.value.jsonOpenHint
+      return
+    }
+    tab.postMessage({ type: 'studio:load', path: r.path }, origin)
+  }, 400)
+}
+
+watch(tab, (v) => { if (v === 'json' && !wf.value) load() })
+watch(fmt, () => { wf.value = null; load() })
+watch(() => props.params, load, { deep: true })
+watch(() => props.template?.id, () => { wf.value = null; load() })
+onBeforeUnmount(() => clearTimeout(timer))
 // The template's own resolution is always offered: a video graph runs at 832x480,
 // which is not a picture size anyone would pick for an icon, and omitting it left
 // the select with no matching option -- rendered blank and silently unchangeable.
@@ -111,17 +224,24 @@ function go() {
   <aside class="drawer">
     <header class="dhead">
       <span class="dico">◈</span>
-      <div class="dtitle">
-        <h2>{{ template.name }}<span class="chip">{{ template.model }}</span></h2>
-        <p>{{ template.desc }}</p>
-      </div>
+      <h2 class="dname">{{ template.name }}<span class="chip">{{ template.model }}</span></h2>
       <button class="icon ghost" :title="t.close" @click="emit('close')">✕</button>
+      <p class="ddesc">{{ template.desc }}</p>
     </header>
 
     <div class="dtabs">
       <button class="ghost sm" :class="{ on: tab === 'basic' }" @click="tab = 'basic'">{{ t.drawerParams }}</button>
       <button class="ghost sm" :class="{ on: tab === 'adv' }" @click="tab = 'adv'">{{ t.drawerAdvanced }}</button>
+      <button v-if="showRun" class="ghost sm" :disabled="comfy === 'busy'" @click="openInComfy">
+        {{ comfy === 'busy' ? t.jsonOpening : comfy === 'ok' ? t.jsonOpened : t.jsonOpen }}
+      </button>
+      <button v-if="showRun" class="ghost sm" :class="{ on: tab === 'json' }" @click="tab = 'json'">
+        {{ t.drawerJson }}
+      </button>
     </div>
+    <p v-if="comfy === 'ok' || comfy === 'fail'" class="jmeta dstatus" :class="{ warn: comfy === 'fail' }">
+      {{ comfy === 'ok' ? `${t.jsonOpened} · ${comfyMsg}` : `${t.jsonOpenFail}${comfyMsg}` }}
+    </p>
 
     <div class="dbody">
       <p v-if="err" class="drift">{{ err }}</p>
@@ -208,6 +328,24 @@ function go() {
           </span>
         </label>
       </template>
+
+      <div v-else-if="tab === 'json'" class="jsonwrap">
+        <div class="jbar">
+          <button class="ghost sm" :class="{ on: fmt === 'ui' }" @click="fmt = 'ui'">{{ t.jsonUi }}</button>
+          <button class="ghost sm" :class="{ on: fmt === 'api' }" @click="fmt = 'api'">{{ t.jsonApi }}</button>
+          <span class="jgrow"></span>
+          <button class="ghost sm" :disabled="!pretty" @click="copy">
+            {{ copied ? t.jsonCopied : t.jsonCopy }}
+          </button>
+          <button class="ghost sm" :disabled="!pretty" @click="save">{{ t.download }}</button>
+        </div>
+        <p class="jmeta">{{ stats }}<template v-if="wf"> · {{ wf.filename }}</template></p>
+        <p v-if="wf?.unfilled?.length" class="drift">
+          {{ t.jsonUnfilled }}{{ wf.unfilled.join('、') }} — {{ t.jsonUnfilledFix }}
+        </p>
+        <p v-if="wfErr" class="drift">{{ t.jsonFail }} {{ wfErr }}</p>
+        <pre v-if="pretty" class="jsonbox">{{ pretty }}</pre>
+      </div>
 
       <div v-else class="adv">
         <label class="inrow">{{ t.shift }}<NumberField v-model="params.shift" :step="0.5" :label="t.shift" /></label>

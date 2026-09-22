@@ -136,15 +136,21 @@ a { color: inherit; text-decoration: none; }
   animation: slide .18s ease-out;
 }
 @keyframes slide { from { transform: translateX(26px); opacity: 0; } }
-.dhead { display: grid; grid-template-columns: 34px minmax(0, 1fr) auto; gap: 10px; align-items: start;
-         padding: 14px 15px; border-bottom: 1px solid var(--line); }
+/* Two rows: icon + name + close share the first, the description takes the full width of the
+   second. It used to sit beside the 34px icon column, so a long one wrapped inside a narrower
+   measure than the drawer actually has. */
+.dhead { display: grid; grid-template-columns: 34px minmax(0, 1fr) auto; gap: 8px 10px;
+         align-items: center; padding: 14px 15px; border-bottom: 1px solid var(--line); }
 .dico { display: grid; place-items: center; width: 34px; height: 34px; border-radius: 9px;
         background: #16264d; color: var(--accent-2); font-size: 15px; }
-.dtitle h2 { margin: 0; font-size: 14px; display: flex; align-items: center; gap: 8px;
-             text-transform: none; letter-spacing: 0; color: var(--fg); }
-.dtitle p { margin: 5px 0 0; font-size: 11.5px; color: var(--muted); line-height: 1.45; }
-.dtabs { display: flex; gap: 4px; padding: 11px 15px 0; }
-.dbody { padding: 14px 15px 16px; overflow-y: auto; }
+.dname { margin: 0; font-size: 14px; display: flex; align-items: center; gap: 8px;
+         text-transform: none; letter-spacing: 0; color: var(--fg); }
+.ddesc { grid-column: 1 / -1; margin: 0; font-size: 11.5px; color: var(--muted); line-height: 1.45; }
+.dtabs { display: flex; gap: 4px; padding: 0 15px; }
+/* padding-top 0: the gap the tab row sees is .drawer's own 16px flex gap.
+   scrollbar-gutter keeps that 10px from being handed back to the content when a
+   shorter view drops the scrollbar -- otherwise the right-aligned 复制/下载 jump. */
+.dbody { padding: 0 15px 16px; overflow-y: auto; scrollbar-gutter: stable; }
 
 @media (max-width: 1240px) {
   .split.open { grid-template-columns: minmax(0, 1fr); }
@@ -332,6 +338,25 @@ button.fav { border-color: var(--warn); color: var(--warn); }
 .adv .inrow { margin: 0; display: grid; grid-template-columns: 74px minmax(0, 1fr); align-items: center; gap: 8px; }
 .adv .inrow input, .adv .inrow .num, .adv .inrow .sel { margin-top: 0; }
 
+/* The workflow file is the drawer's one read-only view. It scrolls on its own: a 700-line
+   graph must not push 复制 / 下载 past the bottom of the panel. */
+.jsonwrap { display: flex; flex-direction: column; gap: 9px; margin-bottom: 10px; }
+.jbar { display: flex; align-items: center; gap: 6px; }
+.jgrow { flex: 1 1 auto; }
+.jmeta { margin: 0; font-family: var(--mono); font-size: 10.5px; color: var(--muted); }
+.jmeta.warn { color: var(--warn); }
+/* The ack line sits under the tab row, not inside a tab, so it repeats that row's gutter. */
+.jmeta.dstatus { padding: 7px 15px 0; }
+.jsonbox {
+  /* Measured in a 366px content column: no-wrap puts 1437px of JSON behind a sideways
+     scrollbar (five pans for one node), wrapping costs 2% more height and none of that.
+     800px is his number; past it the box scrolls and the drawer keeps its own rhythm. */
+  margin: 0; padding: 10px 12px; min-height: 180px; max-height: 800px;
+  overflow: auto; background: var(--panel-2); border: 1px solid var(--line); border-radius: 8px;
+  font-family: var(--mono); font-size: 11px; line-height: 1.55;
+  white-space: pre-wrap; overflow-wrap: anywhere;
+}
+
 /* ---------------------------------------------------------------- results */
 .rtabs { display: flex; gap: 4px; margin-bottom: 12px; }
 .results { padding: 0; overflow: hidden; }
@@ -515,7 +540,7 @@ table.tasks tr.on td:first-child, table.tasks tr.on td.ops { background: var(--p
 
 /* --------------------------------------------------------- task detail drawer */
 /* The drawer title line is the workflow name plus its state; the chip never shrinks. */
-.dtitle h2 .chip { flex: none; }
+.dname .chip { flex: none; }
 .dsec { margin: 18px 0 8px; font-size: 10.5px; font-weight: 500; text-transform: uppercase;
         letter-spacing: .06em; color: var(--muted); }
 .plist { display: grid; gap: 6px; margin: 0; }

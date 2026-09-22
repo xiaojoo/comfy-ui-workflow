@@ -13,7 +13,7 @@ from fastapi import FastAPI, HTTPException, Query
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import select
 
-from . import comfy, flows, gates, runner, tasks, templates
+from . import comfy, comfy_export, flows, gates, runner, tasks, templates
 from .config import COMFY_OUTPUT_ROOT, FIXTURES
 from .db import init_db
 from .gates import Kit
@@ -176,6 +176,24 @@ def models():
 @app.get("/templates")
 def template_list():
     return {"templates": templates.public()}
+
+
+class ExportIn(BaseModel):
+    template: str
+    params: dict = Field(default_factory=dict)
+    format: str = Field(default="ui", pattern="^(ui|api)$")
+
+
+@app.post("/workflow/export")
+def export_workflow(body: ExportIn):
+    """A workflow row as a file ComfyUI itself can open, with these parameters written in."""
+    return comfy_export.for_template(body.template, body.params, body.format)
+
+
+@app.post("/workflow/push")
+def push_workflow(body: ExportIn):
+    """Put that file where ComfyUI keeps its own workflows, so its tab can load it."""
+    return comfy_export.push(body.template, body.params)
 
 
 @app.post("/tasks", status_code=202)

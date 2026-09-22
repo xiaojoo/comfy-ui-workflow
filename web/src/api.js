@@ -20,6 +20,8 @@ export const api = {
   health: () => req('GET', '/health'),
   models: () => req('GET', '/models'),
   templates: () => req('GET', '/templates'),
+  exportWorkflow: (body) => req('POST', '/workflow/export', body),
+  pushWorkflow: (body) => req('POST', '/workflow/push', body),
   tasks: (limit = 20) => req('GET', `/tasks?limit=${limit}`),
   task: (id) => req('GET', `/tasks/${id}`),
   createTask: (body) => req('POST', '/tasks', body),

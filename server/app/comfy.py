@@ -92,6 +92,20 @@ def upload(src, name=None):
     return r.get("name") or fname
 
 
+def put_workflow(path, body):
+    """Save a workflow into the engine's own workflows/ directory -- the one its menu lists.
+
+    The sub-directory has to ride inside the quoted filename: ``POST /userdata/workflows%2Fx.json``
+    lands in ``user/default/workflows/``, while ``?dir=workflows`` is ignored on write and drops
+    the file in the user root instead (both measured against 0.37.0).
+    """
+    url = f"{COMFY}/userdata/{urllib.parse.quote(path, safe='')}"
+    req = urllib.request.Request(url + "?overwrite=true", data=body.encode("utf-8"),
+                                 headers={"Content-Type": "application/json"}, method="POST")
+    urllib.request.urlopen(req, timeout=30).read()
+    return url.split("/userdata/")[1]
+
+
 def running_ids():
     q = _get("/queue")
     return [item[1] for item in q.get("queue_running", [])]

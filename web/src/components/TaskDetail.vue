@@ -50,11 +50,9 @@ function kindOf(f) { return ['mp4', 'webm'].includes(extOf(f)) ? 'video'
   <aside class="drawer">
     <header class="dhead">
       <span class="dico">◷</span>
-      <div class="dtitle">
-        <h2>{{ name || task.template }}<span class="chip" :class="task.state">{{ t.state[task.state] || task.state }}</span></h2>
-        <p>{{ task.title || task.ref }}</p>
-      </div>
+      <h2 class="dname">{{ name || task.template }}<span class="chip" :class="task.state">{{ t.state[task.state] || task.state }}</span></h2>
       <button class="icon ghost" :title="t.close" @click="emit('close')">✕</button>
+      <p class="ddesc">{{ task.title || task.ref }}</p>
     </header>
 
     <div class="dbody">
