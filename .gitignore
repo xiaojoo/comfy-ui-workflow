@@ -21,6 +21,7 @@ icon-pipeline/workflows/3d_d0gear.json
 
 .DS_Store
 Thumbs.db
+.idea/
 
 # spent one-off probes, kept on disk only
 icon-pipeline/_dbg_*.py

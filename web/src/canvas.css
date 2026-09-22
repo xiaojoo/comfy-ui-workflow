@@ -1,0 +1,32 @@
+/* The library's own surface, restated.
+   This file is imported after vue-flow's style.css and theme-default.css so these win the
+   cascade without needing !important: theme-default ships a light palette (white edge
+   labels, #555 handles) that reads as someone else's product against these dark panels. */
+.vue-flow {
+  --vf-handle: var(--accent-2);
+  --vf-connection-path: var(--accent-2);
+  background-color: var(--bg);
+  background-image: radial-gradient(circle at 1px 1px, #1a2740 1px, transparent 0);
+  background-size: 22px 22px;
+}
+
+.vue-flow__edge .vue-flow__edge-path { stroke: var(--line-2); stroke-width: 1.6; }
+.vue-flow__edge.selected .vue-flow__edge-path,
+.vue-flow__edge:hover .vue-flow__edge-path { stroke: var(--accent-2); }
+.vue-flow__edge-text { fill: var(--muted); font-size: 10px; font-family: var(--mono); }
+.vue-flow__edge-textbg { fill: var(--panel); stroke: var(--line-2); stroke-width: 1px; }
+.vue-flow__connectionline path { stroke: var(--accent-2); stroke-width: 1.6; stroke-dasharray: 4 3; }
+
+/* Square sockets, and big enough to hit: a 6px dot on a 22px grid is a miss, not a target. */
+.vue-flow__handle { width: 9px; height: 9px; border-radius: 0; background: var(--panel-2);
+                    border: 1.5px solid var(--accent-2); }
+.vue-flow__handle:hover { background: var(--accent-2); }
+.vue-flow__handle.valid { background: var(--ok); border-color: var(--ok); }
+.vue-flow__handle.invalid { background: var(--bad); border-color: var(--bad); }
+
+.vue-flow__node { cursor: grab; }
+.vue-flow__node.dragging { cursor: grabbing; }
+.vue-flow__node-step { background: transparent; border: none; padding: 0; font-size: inherit; }
+.vue-flow__nodesselection-rect, .vue-flow__selection { background: #2f6bff14; border: 1px solid var(--accent); }
+.vue-flow__pane { cursor: default; }
+.vue-flow__panel.bottom { margin: 10px; }

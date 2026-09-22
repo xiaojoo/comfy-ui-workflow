@@ -608,10 +608,28 @@ def graph_for(template, params):
     return g
 
 
+# The media inputs a previous step's output can be wired into, with the type the canvas
+# matches on. ref2-4 are deliberately absent: they are extra references rather than the
+# subject of the step, and the binding mechanism carries one picture per run, so offering
+# them as sockets would advertise a wire the runner cannot pull.
+BIND_IN = {"image": "image", "ref1": "image", "video": "video"}
+
+
+def ports_of(t):
+    """The sockets of a step, derived from the fields the form already renders.
+
+    A template cannot advertise an input its own parameter panel has no control for, and
+    adding a media field to a template gives it a port without editing the canvas.
+    """
+    return {"in": [{"name": f, "type": k} for f in t["fields"] if (k := BIND_IN.get(f))],
+            "out": [{"name": t["media"], "type": t["media"]}]}
+
+
 def public():
     """What the browser may show -- no node ids, no graph internals."""
     return [{"id": t["id"], "name": t["name"], "name_en": t["name_en"], "category": t["category"],
              "desc": t["desc"], "desc_en": t["desc_en"], "fields": t["fields"],
              "defaults": {k: v for k, v in t["defaults"].items() if k != "style"},
              "verified": t["verified"], "model": t["model"], "model_en": t["model_en"],
-             "media": t["media"], "spec": t["spec"], "sizes": t.get("sizes")} for t in TEMPLATES]
+             "media": t["media"], "spec": t["spec"], "sizes": t.get("sizes"), "ports": ports_of(t)}
+            for t in TEMPLATES]

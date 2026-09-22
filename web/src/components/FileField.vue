@@ -92,5 +92,5 @@ onBeforeUnmount(dropLocal)
   <p v-if="err" class="err ff-err">{{ err }}</p>
 
   <Lightbox v-if="big && src && !broken" :title="name" code="ComfyUI input"
-            :file="{ url: src, filename: name }" @close="big = false" />
+            :files="[{ url: src, filename: name }]" :index="0" @close="big = false" />
 </template>

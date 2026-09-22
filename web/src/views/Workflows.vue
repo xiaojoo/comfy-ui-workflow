@@ -98,9 +98,17 @@ async function submit() {
   }
 }
 
-async function favorite(v) {
-  await api.favorite(current.value.id, v)
-  current.value = await api.task(current.value.id)
+// The star is now written by whichever tile he hovered, and the fresh row comes back up
+// from there; this only keeps the inspected run in step with it.
+function favorite(t) {
+  current.value = t
+}
+
+// A removed file leaves the task row and its log alone, so the run keeps its place in
+// the line -- only the picture list it reports on changes. The row comes back from the
+// delete itself, so no second read is asked for.
+function updated(t) {
+  current.value = t
 }
 
 // The ▷/✦ on a finished figure: same drawer, different template, with that file bound
@@ -199,7 +207,7 @@ onBeforeUnmount(() => clearInterval(timer))
         </section>
 
         <ResultTabs :task="current" :runs="lineRuns" :templates="templates" :filtered="!!onlyTpl"
-                    @favorite="favorite" @pick="adopt" @useforvideo="useForVideo" />
+                    @favorite="favorite" @pick="adopt" @useforvideo="useForVideo" @deleted="updated" />
       </div>
 
       <ParamPanel v-if="drawer && picked" :template="picked" :params="params" :models="models?.catalog"

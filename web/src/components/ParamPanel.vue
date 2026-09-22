@@ -6,8 +6,11 @@ import NumberField from './NumberField.vue'
 import FileField from './FileField.vue'
 
 const props = defineProps({ template: Object, params: Object, models: Object, refShot: Object,
-                           routes: Array, busy: Boolean, err: String })
-const emit = defineEmits(['submit', 'close', 'route'])
+                           routes: Array, busy: Boolean, err: String,
+                           // The canvas uses this panel as a plain parameter form: ▶ 生成
+                           // there would start one step of a chain nobody asked to run alone.
+                           showRun: { type: Boolean, default: true } })
+const emit = defineEmits(['submit', 'close', 'route', 'del'])
 const { t } = useI18n()
 
 const tab = ref('basic')
@@ -215,7 +218,8 @@ function go() {
       </div>
 
       <p v-if="needPrompt" class="drift">{{ t.needPrompt }}</p>
-      <button class="go" :disabled="busy" @click="go">▶ {{ busy ? t.generating : goLabel }}</button>
+      <button v-if="showRun" class="go" :disabled="busy" @click="go">▶ {{ busy ? t.generating : goLabel }}</button>
+      <button v-else class="ghost delstep" @click="emit('del')">{{ t.canvasDelStep }}</button>
     </div>
   </aside>
 </template>

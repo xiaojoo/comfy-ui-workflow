@@ -9,13 +9,14 @@ const route = useRoute()
 
 // The nav mirrors the mock's eight entries. Only the first two carry real function
 // in this build; the rest render an explicit "not implemented" state.
-const NAV = ['workflows', 'tasks', 'models', 'library', 'batch', 'schedule', 'gate', 'logs']
-const ROUTES = { workflows: '/', tasks: '/tasks', models: '/models', library: '/library',
+const NAV = ['workflows', 'canvas', 'tasks', 'models', 'library', 'batch', 'schedule', 'gate', 'logs']
+const ROUTES = { workflows: '/', canvas: '/canvas', tasks: '/tasks', models: '/models', library: '/library',
                  batch: '/batch', schedule: '/schedule', gate: '/gate', logs: '/logs' }
 const active = computed(() => NAV.find((k) => ROUTES[k] === route.path) || 'workflows')
 
 const ICONS = {
   workflows: '<rect x="2" y="2" width="5" height="5" rx="1.2"/><rect x="9" y="2" width="5" height="5" rx="1.2"/><rect x="2" y="9" width="5" height="5" rx="1.2"/><rect x="9" y="9" width="5" height="5" rx="1.2"/>',
+  canvas: '<rect x="1.6" y="2.2" width="4.2" height="4.2" rx=".9"/><rect x="1.6" y="9.6" width="4.2" height="4.2" rx=".9"/><rect x="10.2" y="5.9" width="4.2" height="4.2" rx=".9"/><path d="M5.8 4.3c2.3 0 2.1 3.6 4.4 3.7M5.8 11.7c2.3 0 2.1-3.6 4.4-3.7"/>',
   tasks: '<circle cx="8" cy="8" r="6"/><path d="M8 4.6V8l2.6 1.6"/>',
   models: '<path d="M8 1.8 14 5v6l-6 3.2L2 11V5z"/><path d="M2 5l6 3.2L14 5M8 8.2v6"/>',
   library: '<path d="M2 5.4 8 2.4l6 3-6 3z"/><path d="M2 8.6l6 3 6-3"/>',

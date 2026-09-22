@@ -378,8 +378,15 @@ button.fav { border-color: var(--warn); color: var(--warn); }
 .lightbox { position: fixed; inset: 0; z-index: 80; display: grid; place-items: center;
             padding: 24px; background: #05070fe8; }
 .lbbox { display: flex; flex-direction: column; gap: 10px; max-width: min(1160px, 94vw); }
-.lbbox header { display: flex; align-items: center; gap: 10px; font-size: 12.5px; color: var(--muted); }
-.lbbox header b { font-weight: 500; color: var(--fg); }
+/* The bar belongs to the picture and keeps no box of its own. What it does keep is a
+   halo: the figure underneath is whatever the model made, and a light glyph on a white
+   icon is unreadable without one. */
+.lbbox header { position: absolute; z-index: 2; top: 8px; left: 8px; right: 8px;
+                display: flex; align-items: center; gap: 10px;
+                font-size: 12.5px; color: var(--muted); text-shadow: 0 1px 2px #05070fe6, 0 0 6px #05070fb3; }
+.lbbox header b { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+                  font-weight: 500; color: var(--fg); }
+.lbbox header .mono { flex: none; }
 .lbbox header .sp { flex: 1; }
 .lbbox video { max-width: 100%; max-height: 76vh; border-radius: 10px; background: #000;
                border: 1px solid var(--line-2); }
@@ -387,7 +394,50 @@ button.fav { border-color: var(--warn); color: var(--warn); }
              border: 1px solid var(--line-2); }
 .lbnote { margin: 0; padding: 44px 60px; text-align: center; color: var(--muted); font-size: 13px;
           border: 1px dashed var(--line-2); border-radius: 10px; }
-.corner { position: absolute; top: 6px; right: 6px; display: flex; gap: 4px; }
+/* --------------------------------------------------------- the 3D view */
+/* A square box on the same height contract as the media: these runs hand back a square
+   PNG next to the mesh, and a wider box measured a 454px jump in the overlay when
+   stepping between the two. */
+.mv { --mvbox: min(76vh, 94vw, 1160px); position: relative; width: var(--mvbox); height: var(--mvbox);
+      overflow: hidden; border-radius: 10px; border: 1px solid var(--line-2);
+      background: radial-gradient(120% 90% at 50% 12%, #1b2748, #0b1226 62%, #070d1c); }
+.mv canvas { display: block; width: 100%; height: 100%; cursor: grab; touch-action: none; }
+.mv canvas:active { cursor: grabbing; }
+.mvhint, .mvload { position: absolute; left: 0; right: 0; bottom: 10px; margin: 0; text-align: center;
+                   font-size: 11px; color: var(--muted); pointer-events: none; }
+.mv .lbnote { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+              background: #0b1428d9; }
+/* The step arrows are the rail's own widget; the stage exists so they centre on the
+   picture rather than on the header-plus-picture column, which sits 18px higher. */
+.lbstage { position: relative; display: grid; place-items: center; }
+.lbstage .carrow { top: 50%; }
+/* Same trap as the stepper: the shared button:hover brightness re-lights whichever node
+   Chrome's stale :hover set still holds, so the highlight is a class the pointer events
+   set. Two-part selectors lose to button:hover:not(:disabled), so this one is three. */
+.lbstage .carrow:hover { filter: none; }
+.lbstage .carrow.hot { filter: brightness(1.14); }
+/* Removal names the file it is about to take, in this app's own panel: the browser's
+   confirm() cannot be styled and reads as another program's window. */
+.lbask { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); z-index: 3;
+         display: grid; gap: 8px; width: min(420px, 84%); padding: 18px 20px; text-align: left;
+         border-radius: 10px; border: 1px solid var(--line-2); background: var(--panel);
+         box-shadow: 0 18px 50px #05070fcc; }
+.lbask .q { margin: 0; font-size: 13.5px; color: var(--fg); }
+.lbask .fnm { margin: 0; color: var(--muted); overflow-wrap: anywhere; }
+.lbask .hint { margin: 0; }
+.lbask .err { margin: 0; }
+.lbask .acts { display: flex; justify-content: flex-end; gap: 8px; margin-top: 2px; }
+button.del { background: var(--bad); border-color: var(--bad); }
+/* The header's own glyph stays the size of its neighbours and only takes the colour on
+   hover, so a permanent action does not shout next to download and close. */
+.iconbtn.del { background: #0b1428d9; border-color: var(--line-2); color: var(--fg); }
+.iconbtn.del:hover { color: var(--bad); border-color: var(--bad); }
+.lbbox .lbpos { opacity: .72; }
+/* The corner tools answer to the pointer: the figure stays the picture until he asks
+   for something done to it. Hidden also means unclickable, not just transparent. */
+.corner { position: absolute; top: 6px; right: 6px; display: flex; gap: 4px;
+          opacity: 0; pointer-events: none; transition: opacity .12s ease; }
+.shot.hot .corner, .corner:focus-within { opacity: 1; pointer-events: auto; }
 .iconbtn { display: grid; place-items: center; width: 26px; height: 26px; padding: 0; border-radius: 6px;
            font-size: 12px; line-height: 1; color: var(--fg); background: #0b1428d9;
            border: 1px solid var(--line-2); }
@@ -542,3 +592,132 @@ figure { margin: 0; text-align: center; }
 figcaption { font-family: var(--mono); font-size: 10px; color: var(--muted); margin-top: 5px; }
 .checker.sm { display: grid; place-items: center; border: 1px solid var(--line); border-radius: 4px; }
 .checker.sm img { display: block; }
+
+/* ------------------------------------------------------------ canvas */
+/* Canvas chrome is square and flush: the stage is the content here, so the frame around
+   it keeps no radius of its own. Only the step cards carry the app's inner radius.
+   The page owns the viewport height: the stage takes whatever the header left behind,
+   so no constant has to be re-measured when the subtitle wraps to another line.
+   (58 topbar + 20 + 20 content padding.)
+   It has to be `height`, not `min-height`: a flex child shrinks only into a definite
+   height, and with min-height the palette's 14 rows kept their min-content instead --
+   which pushed the English page 83px past the viewport and gave the whole screen a
+   scrollbar. The 460px floor is the canvas's own minimum; a shorter window scrolls on
+   purpose rather than crushing the stage. */
+.page.fill { height: max(460px, calc(100vh - 98px)); }
+.flowbar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.flowbar .namei { flex: 1 1 200px; max-width: 300px; margin: 0; }
+.flowbar .saved { flex: 0 0 190px; }
+/* The select carries a 4px top margin for stacked forms; in a row it would sit 4px low. */
+.flowbar .saved .sel { margin-top: 0; }
+/* In this bar the run button is a peer of 新建 / 保存, not the drawer's full-width CTA:
+   same 7px 13px padding and 12.5px type, so all three measure the same height. It keeps
+   the filled accent background as the only thing that marks it primary. */
+.flowbar button.go { width: auto; margin: 0; flex: none; padding: 7px 13px; font-size: 12.5px; }
+.flowbar .rstate { display: flex; align-items: center; gap: 7px; font-size: 12px; color: var(--muted);
+                   min-width: 0; }
+.flowbar .rstate b { font-weight: 400; color: var(--bad); overflow: hidden; text-overflow: ellipsis;
+                     white-space: nowrap; max-width: 420px; }
+.flowbar .rstate.running { color: var(--accent-2); }
+.flowbar .rstate.done b { color: var(--ok); }
+
+.flowpage { display: grid; grid-template-columns: 232px minmax(0, 1fr); gap: 0; flex: 1 1 auto;
+            min-height: 0; border: 1px solid var(--line); background: var(--panel); }
+/* Grid items are min-content floored by default, which is what let the palette rows
+   stretch the row instead of scrolling inside their own column. */
+.flowpage > * { min-height: 0; }
+.flowpage.drawer { grid-template-columns: 232px minmax(0, 1fr) 420px; }
+.flowpage .drawer { max-height: none; }
+
+.palette { display: flex; flex-direction: column; gap: 8px; min-width: 0; padding: 10px;
+           border-right: 1px solid var(--line); background: var(--bg-2); }
+.palette .phead { font-size: 10.5px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); }
+.palette input.mini { width: 100%; }
+.pchips { display: flex; flex-wrap: wrap; gap: 4px; }
+.palist { display: flex; flex-direction: column; gap: 3px; overflow-y: auto; min-height: 0; flex: 1;
+         margin: 0 -4px; padding: 0 4px; }
+.prow { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; text-align: left;
+        background: transparent; border-color: transparent; padding: 6px 8px; font-size: 12px;
+        border-radius: 8px; }
+.prow:hover:not(:disabled) { background: var(--panel-2); filter: none; border-color: var(--line); }
+/* The English template names run past 232px, and five of fourteen were cut at the point
+   where they stop distinguishing themselves ("Character clip, image to…" vs "…by
+   reference" are the two routes of one decision). Wrapping beats ellipsising there. */
+.prow .pn { min-width: 0; color: var(--fg); overflow-wrap: anywhere; }
+.prow .pm { flex: none; font-size: 10px; color: var(--muted); font-family: var(--mono); }
+.pnone { color: var(--muted); font-size: 12px; margin: 6px 0; }
+
+.stage { position: relative; min-width: 0; }
+.hint0 { position: absolute; inset: 0; display: grid; place-items: center; margin: 0;
+         color: var(--muted); font-size: 13px; pointer-events: none; }
+
+/* one step card */
+.fn { width: 246px; background: var(--panel-2); border: 1px solid var(--line-2); border-radius: 10px;
+      padding: 8px 10px 9px; font-size: 12px; }
+.fn.on { border-color: var(--accent-2); box-shadow: 0 0 0 1px var(--accent-2) inset; }
+.fn header { display: flex; align-items: center; gap: 6px; }
+.fn .ord { flex: none; display: grid; place-items: center; width: 16px; height: 16px; font-size: 10px;
+           border-radius: 4px; background: #16264d; color: #cfe0ff; font-weight: 600; }
+.fn .nm { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600;
+          font-size: 12.5px; }
+.fn .x { margin-left: auto; flex: none; width: 20px; height: 20px; padding: 0; font-size: 10px;
+         background: transparent; border-color: transparent; color: var(--muted);
+         opacity: 0; pointer-events: none; }
+/* Hidden means unhittable, and the reveal is the rail's pointerenter flag plus
+   focus-within so a keyboard user is not sent hunting for an invisible button. */
+.fn.hot .x, .fn.on .x, .fn:focus-within .x { opacity: 1; pointer-events: auto; }
+.fn .x:hover:not(:disabled) { filter: none; background: var(--line); color: var(--fg); }
+.fn .none { color: var(--muted); font-size: 11px; margin-top: 7px; }
+.fn p { margin: 5px 0 0; }
+.fn .mo { color: var(--muted); font-size: 10.5px; font-family: var(--mono);
+          overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fn .ch { display: flex; flex-wrap: wrap; gap: 3px; }
+.fn .ch i { font-style: normal; font-family: var(--mono); font-size: 10px; color: #cfe0ff;
+            background: #16264d; border-radius: 4px; padding: 1px 5px; max-width: 100%;
+            overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fn .ch.def { color: var(--muted); font-size: 10.5px; }
+.fn .pins { display: flex; gap: 4px; margin-top: 5px; }
+.fn .pin { font-family: var(--mono); font-size: 9.5px; color: var(--muted);
+           border: 1px solid var(--line-2); border-radius: 4px; padding: 0 4px; }
+.fn .thumb { position: relative; margin-top: 7px; border-radius: 6px; overflow: hidden;
+            background: #fff; aspect-ratio: 1; display: grid; place-items: center; cursor: zoom-in; }
+.fn .thumb img, .fn .thumb video { width: 100%; height: 100%; object-fit: cover; display: block; }
+.fn .thumb .ply { position: absolute; inset: 0; display: grid; place-items: center; color: #fffc;
+                 font-size: 22px; text-shadow: 0 1px 6px #000a; }
+.fn footer { display: flex; align-items: center; gap: 6px; margin-top: 8px; }
+.fn .st { font-size: 10.5px; color: var(--muted); }
+.fn .pg { font-family: var(--mono); font-size: 10px; color: var(--muted); }
+.fn .ed { margin-left: auto; flex: none; padding: 1px 7px; font-size: 10.5px; background: transparent;
+          border-color: var(--line-2); color: var(--muted); }
+.fn .ed:hover:not(:disabled) { color: var(--fg); filter: none; }
+.fn .dot { flex: none; width: 7px; height: 7px; border-radius: 50%; background: var(--line-2); }
+.fn.s-running .dot { background: var(--accent-2); box-shadow: 0 0 6px var(--accent-2); }
+.fn.s-running .st { color: var(--accent-2); }
+.fn.s-queued .dot { background: var(--warn); }
+.fn.s-done .dot { background: var(--ok); box-shadow: 0 0 6px var(--ok); }
+.fn.s-error { border-color: #5a2330; }
+.fn.s-error .dot { background: var(--bad); box-shadow: 0 0 6px var(--bad); }
+.fn.s-error .st { color: var(--bad); }
+.fn .err { color: var(--bad); font-size: 10.5px; line-height: 1.4; overflow-wrap: anywhere;
+           max-height: 46px; overflow: hidden; }
+.zoomer { display: flex; gap: 4px; }
+.zb { width: 26px; height: 26px; padding: 0; font-size: 13px; line-height: 1; background: var(--panel-2);
+      border-color: var(--line-2); color: var(--fg); border-radius: 6px; }
+.zb:hover:not(:disabled) { filter: none; background: #1c2b49; }
+/* Anchored top-centre: bottom-centre sat on the cards' 参数 button, because a fitted
+   chain is vertically centred too. Nothing in it may wrap -- the panel is a tool strip,
+   and a two-line 「取上游第几张（从 1 数）」 reads as a paragraph. */
+.wire { display: flex; align-items: center; gap: 10px; padding: 7px 10px; background: var(--panel-2);
+        border: 1px solid var(--line-2); border-radius: 8px; font-size: 11.5px; color: var(--muted);
+        max-width: calc(100% - 24px); }
+.wire .wl { display: flex; align-items: center; gap: 6px; margin: 0; white-space: nowrap; }
+.wire button { white-space: nowrap; }
+.wire .num { width: 74px; }
+.wire .wt { color: var(--fg); max-width: 320px; overflow: hidden; text-overflow: ellipsis;
+            white-space: nowrap; }
+/* The file the number points at, so the choice is checked against a name and not
+   against a count the reader has to remember. */
+.wire .wf { font-family: var(--mono); font-size: 10.5px; color: var(--muted); max-width: 190px;
+            overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+button.delstep { width: 100%; margin-top: 12px; background: transparent; border-color: #5a2330;
+                 color: var(--bad); }

@@ -6,20 +6,18 @@ goes blind -- a dependency changes, a metric stops discriminating -- the service
 must refuse to serve rather than hand out confident-looking PASSes.
 """
 
-import json
 from contextlib import asynccontextmanager
-from datetime import datetime, timezone
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Query
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import select
 
-from . import comfy, gates, runner, templates
-from .config import FIXTURES
+from . import comfy, flows, gates, runner, tasks, templates
+from .config import COMFY_OUTPUT_ROOT, FIXTURES
 from .db import init_db
 from .gates import Kit
-from .models import Asset, Batch, Task
+from .models import Asset, Batch, Flow, FlowRun, Task
 from .db import Session
 
 RULER_FIXTURES = [("gear_gt.png", "gear.svg"), ("shield_gt.png", "shield.svg")]
@@ -169,12 +167,6 @@ def svg_of(batch_id: int, asset_id: int, stage: str = "flat"):
 
 # ---------------------------------------------------------------- studio surface
 
-class TaskIn(BaseModel):
-    template: str
-    prompt: str = Field(default="", max_length=2000)
-    params: dict = Field(default_factory=dict)
-
-
 @app.get("/models")
 def models():
     """What the live engine can load. Names come from ComfyUI, never from a list here."""
@@ -186,71 +178,16 @@ def template_list():
     return {"templates": templates.public()}
 
 
-def _qwen_grid(params, tpl):
-    """Qwen-Image-2.1 sizes everything on a 32-grid and its own budget stops at 2K.
-
-    Refused here rather than at the engine: a bad canvas otherwise comes back as a
-    latent-shape error no caller can trace back to a number box.
-    """
-    edit = tpl["map"] is templates.QWEN_EDIT_MAP
-    keys = ("resolution",) if edit else ("width", "height")
-    for k in keys:
-        v = params.get(k)
-        if not isinstance(v, int):
-            raise HTTPException(422, f"{k} 要填整数")
-        if v % 32:
-            raise HTTPException(422, f"{k} 必须是 32 的倍数")
-    if edit:
-        if params["resolution"] > 2048:
-            raise HTTPException(422, "resolution 是总像素预算，官方上限 2048（≈2K 直出）")
-    elif params["width"] * params["height"] > 2048 * 2048:
-        raise HTTPException(422, "超过原生 2K 的像素预算（2048×2048）")
-
-
 @app.post("/tasks", status_code=202)
-def create_task(body: TaskIn):
-    tpl = templates.BY_ID.get(body.template)
-    if tpl is None:
-        raise HTTPException(422, f"unknown template {body.template!r}")
-    # Only prompt-taking templates require one; the 3D chain is driven by an image.
-    if "prompt" in tpl["fields"] and not body.prompt.strip():
-        raise HTTPException(422, "this template needs a prompt")
-    params = {**tpl["defaults"], **body.params}
-    # An image-driven template with nothing bound would fail inside ComfyUI as
-    # "image not in list"; the caller can act on this instead.
-    if "image" in tpl["fields"] and not (params.get("image") or params.get("image_task")):
-        raise HTTPException(422, "这条工作流要先有一张图：在参数里选图，或在结果里点「做成视频」")
-    if "video" in tpl["fields"] and not (params.get("video") or params.get("video_task")):
-        raise HTTPException(422, "这条工作流要先有一个视频：在参数里上传，或在结果里点「做成高清」")
-    # ref1 is the edit target; the rest are optional references, so only this one is required.
-    if "ref1" in tpl["fields"] and not (params.get("ref1") or params.get("image_task")):
-        raise HTTPException(422, "这条工作流要先有一张参考图：ref1 是被改的对象，或在结果里点「拿去改」")
-    if tpl["map"] in (templates.QWEN_MAP, templates.QWEN_EDIT_MAP):
-        _qwen_grid(params, tpl)
-    if "prompt" in tpl["fields"]:
-        params["prompt"] = body.prompt
-    params["prefix"] = f"studio/{body.template}"
-    title = body.prompt[:60] if "prompt" in tpl["fields"] else str(params.get("image") or params.get("video") or tpl["name"])
-    with Session() as s:
-        t = Task(template=body.template, title=title, model=tpl["model"],
-                 params=params, state="queued")
-        s.add(t)
-        s.commit()
-        tid = t.id
-        # The readable id is derived from the row id so it cannot collide, and the
-        # queue position a caller sees is this task's, not the engine's.
-        t.ref = f"task_{datetime.now(timezone.utc):%Y%m%d}_{tid:03d}"
-        s.commit()
-        ref = t.ref
-    pos = runner.runner.submit_task(tid)
-    return {"task_id": tid, "ref": ref, "queue_position": pos}
+def create_task(body: tasks.TaskIn):
+    return tasks.create(body)
 
 
 @app.get("/tasks")
 def list_tasks(limit: int = Query(default=20, ge=1, le=200)):
     with Session() as s:
         rows = s.scalars(select(Task).order_by(Task.id.desc()).limit(limit)).all()
-        return {"tasks": [_task_row(t) for t in rows]}
+        return {"tasks": [tasks.row(t) for t in rows]}
 
 
 @app.get("/tasks/{task_id}")
@@ -259,7 +196,7 @@ def get_task(task_id: int):
         t = s.get(Task, task_id)
         if t is None:
             raise HTTPException(404, "no such task")
-        return _task_row(t, full=True)
+        return tasks.row(t, full=True)
 
 
 class Favorite(BaseModel):
@@ -277,21 +214,111 @@ def favorite(task_id: int, body: Favorite):
         return {"id": t.id, "favorite": t.favorite}
 
 
-def _task_row(t, full=False):
-    tpl = templates.BY_ID.get(t.template)
-    row = {"id": t.id, "ref": t.ref, "template": t.template, "title": t.title, "model": t.model,
-           "media": tpl["media"] if tpl else "image",
-           "state": t.state, "progress": t.progress, "error": t.error,
-           "favorite": t.favorite, "seconds": t.seconds,
-           "created_at": t.created_at, "finished_at": t.finished_at,
-           "params": {k: t.params.get(k) for k in
-                      ("width", "height", "steps", "cfg", "seed", "batch", "length", "fps", "octree")
-                      if t.params.get(k) is not None}}
-    if full:
-        # The single-task view carries the whole parameter set: the form restores
-        # itself from it, and a summary missing unet/clip would blank the model select.
-        row["params"] = t.params
-        row["outputs"] = t.outputs
-        row["log"] = t.log
-        row["comfy_id"] = t.comfy_id
-    return row
+class OutputIn(BaseModel):
+    index: int
+    filename: str
+
+
+@app.post("/tasks/{task_id}/delete-output")
+def delete_output(task_id: int, body: OutputIn):
+    """Take one produced file off the disk for good, and mark its slot as gone.
+
+    Two rules hold this down. The request names an index plus the filename it expects
+    there and the path is rebuilt from the row, so no call can name a file the database
+    does not know about, and the resolved path still has to sit under the engine's
+    output root. And the slot is tombstoned rather than removed: a later run's input
+    binding stores that index, so closing the gap would hand it its neighbour's picture
+    with nothing to show it happened.
+    """
+    with Session() as s:
+        t = s.get(Task, task_id)
+        if t is None:
+            raise HTTPException(404, "no such task")
+        outs = [dict(o) for o in (t.outputs or [])]
+        if not 0 <= body.index < len(outs) or outs[body.index].get("filename") != body.filename:
+            raise HTTPException(409, "这一项的内容已经变了，重新读取后再试")
+        if not outs[body.index].get("deleted"):
+            e = outs[body.index]
+            root = COMFY_OUTPUT_ROOT.resolve()
+            path = (root / e.get("subfolder", "") / e["filename"]).resolve()
+            if not path.is_relative_to(root):
+                raise HTTPException(400, "产物路径不在引擎输出目录内，拒绝删除")
+            path.unlink(missing_ok=True)
+            e["deleted"] = True
+            t.outputs = outs
+            s.commit()
+        return tasks.row(t, full=True)
+
+
+# ---------------------------------------------------------------- canvas surface
+#
+# A flow is an arrangement of the templates above, and a run of it is a row of Tasks:
+# every structural rule lives in flows.validate, and every parameter rule is the one
+# POST /tasks already applies. Nothing here is a second copy of either.
+
+@app.get("/flows")
+def list_flows(limit: int = Query(default=50, ge=1, le=200)):
+    with Session() as s:
+        out = []
+        for f in s.scalars(select(Flow).order_by(Flow.updated_at.desc()).limit(limit)):
+            g = f.graph or {}
+            out.append({"id": f.id, "name": f.name, "updated_at": f.updated_at,
+                        "nodes": len(g.get("nodes") or []), "edges": len(g.get("edges") or [])})
+        return {"flows": out}
+
+
+@app.post("/flows", status_code=201)
+def create_flow(body: flows.FlowIn):
+    order = flows.validate(body.graph)
+    with Session() as s:
+        f = Flow(name=body.name, graph=body.graph)
+        s.add(f)
+        s.commit()
+        return {"flow_id": f.id, "steps": len(order)}
+
+
+@app.get("/flows/runs/{run_ref}")
+def get_flow_run(run_ref: str):
+    return flows.status(run_ref)
+
+
+@app.get("/flows/{flow_id}")
+def get_flow(flow_id: int):
+    with Session() as s:
+        f = s.get(Flow, flow_id)
+        if f is None:
+            raise HTTPException(404, "没有这条画布")
+        runs = s.scalars(select(FlowRun).where(FlowRun.flow_id == flow_id)
+                         .order_by(FlowRun.id.desc()).limit(10)).all()
+        return {"id": f.id, "name": f.name, "graph": f.graph,
+                "runs": [{"run": r.ref, "state": r.state, "error": r.error,
+                          "created_at": r.created_at, "finished_at": r.finished_at} for r in runs]}
+
+
+@app.put("/flows/{flow_id}")
+def update_flow(flow_id: int, body: flows.FlowIn):
+    order = flows.validate(body.graph)
+    with Session() as s:
+        f = s.get(Flow, flow_id)
+        if f is None:
+            raise HTTPException(404, "没有这条画布")
+        f.name, f.graph = body.name, body.graph
+        s.commit()
+        return {"flow_id": f.id, "steps": len(order)}
+
+
+@app.delete("/flows/{flow_id}")
+def delete_flow(flow_id: int):
+    """Forget the arrangement. Its runs stay: they are the record of what was generated."""
+    with Session() as s:
+        f = s.get(Flow, flow_id)
+        if f is None:
+            raise HTTPException(404, "没有这条画布")
+        s.delete(f)
+        s.commit()
+        return {"deleted": flow_id}
+
+
+@app.post("/flows/{flow_id}/run", status_code=202)
+def run_flow(flow_id: int):
+    return flows.start(flow_id)

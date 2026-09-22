@@ -79,3 +79,46 @@ class Asset(Base):
     approval: Mapped[str] = mapped_column(String, default="pending")
 
     batch: Mapped[Batch] = relationship(back_populates="assets")
+
+
+class Flow(Base):
+    """A saved canvas: measured templates arranged into a chain, with each step's own overrides.
+
+    The unit is a *template*, not a ComfyUI node. Compiling a chain into one graph would
+    collide node ids between templates and ask the engine to hold several model sets at
+    once, which on this box is not slow but fatal -- see the 15.5 GiB WSL ceiling.
+    """
+
+    __tablename__ = "flows"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String)
+    # As authored: {nodes: [{id, template, params, position}], edges: [{from, out, to, in, index}]}.
+    # Compiled against the live registry at run time, so a template that has since changed
+    # surfaces as a refusal rather than a half-run chain.
+    graph: Mapped[dict] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=now, onupdate=now)
+
+
+class FlowRun(Base):
+    """One execution of a canvas.
+
+    The steps are Tasks, and nothing here duplicates them: a chain step is an ordinary
+    generation run whose input happens to be another run's output, so progress, logs and
+    artefacts stay on the task row. What this row owns is the ordering and the reason a
+    later step never became a task at all.
+    """
+
+    __tablename__ = "flow_runs"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    ref: Mapped[str | None] = mapped_column(String, unique=True, index=True)
+    flow_id: Mapped[int] = mapped_column(ForeignKey("flows.id"), index=True)
+    # [{node, template, task_id, error}] -- task_id is null until that step is submitted,
+    # and stays null for every step after the one that stopped the chain.
+    steps: Mapped[list] = mapped_column(JSON, default=list)
+    state: Mapped[str] = mapped_column(String, default="queued", index=True)
+    error: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=now)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime)

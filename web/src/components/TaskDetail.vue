@@ -1,13 +1,18 @@
 <script setup>
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { useI18n } from '../i18n'
 import Lightbox from './Lightbox.vue'
 
 const props = defineProps({ task: Object, name: String })
-const emit = defineEmits(['close'])
+const emit = defineEmits(['close', 'updated'])
 const { t } = useI18n()
 
-const big = ref(null)
+const big = ref(null)   // index into outputs while the full-size view is open
+// `i` is the slot's position in the row's own list, which keeps a deleted entry so an
+// input binding made earlier still names the same file.
+const outputs = computed(() => (props.task.outputs || []).map((o, i) => ({ ...o, i }))
+  .filter((o) => !o.deleted))
+watch(() => outputs.value.length, (n) => { if (big.value > n - 1) big.value = Math.max(0, n - 1) })
 
 const running = computed(() => ['queued', 'running'].includes(props.task.state))
 
@@ -78,10 +83,10 @@ function kindOf(f) { return ['mp4', 'webm'].includes(extOf(f)) ? 'video'
       </dl>
 
       <h3 class="dsec">{{ t.variants }}</h3>
-      <p v-if="!task.outputs?.length" class="hint">{{ t.noOutput }}</p>
+      <p v-if="!outputs.length" class="hint">{{ t.noOutput }}</p>
       <div v-else class="files">
-        <figure v-for="o in task.outputs" :key="o.url" class="file">
-          <div class="thumb" :title="t.enlargeFile" @click="big = o">
+        <figure v-for="(o, i) in outputs" :key="o.url" class="file">
+          <div class="thumb" :title="t.enlargeFile" @click="big = i">
             <video v-if="kindOf(o) === 'video'" :src="o.url" preload="metadata" muted />
             <img v-else-if="kindOf(o) === 'image'" :src="o.url" :alt="o.filename" loading="lazy" />
             <span v-else class="ext">{{ extOf(o) }}</span>
@@ -102,5 +107,6 @@ function kindOf(f) { return ['mp4', 'webm'].includes(extOf(f)) ? 'video'
     </div>
   </aside>
 
-  <Lightbox v-if="big" :title="big.filename" :code="task.ref" :file="big" @close="big = null" />
+  <Lightbox v-if="outputs[big]" :title="outputs[big].filename" :code="task.ref" :files="outputs"
+            :task="task.id" v-model:index="big" @deleted="emit('updated', $event)" @close="big = null" />
 </template>

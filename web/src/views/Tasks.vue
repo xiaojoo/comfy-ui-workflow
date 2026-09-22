@@ -50,7 +50,8 @@ onBeforeUnmount(() => clearInterval(timer))
 
     <div class="split" :class="{ open: !!detail }">
       <TaskTable :tasks="tasks" :names="names" :active="detail?.id" @pick="(x) => show(x.id)" />
-      <TaskDetail v-if="detail" :task="detail" :name="nameOf(detail)" @close="detail = null" />
+      <TaskDetail v-if="detail" :task="detail" :name="nameOf(detail)" @updated="(x) => detail = x"
+                  @close="detail = null" />
     </div>
   </div>
 </template>
