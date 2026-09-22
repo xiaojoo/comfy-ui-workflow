@@ -1,6 +1,6 @@
 <script setup>
-import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
-import { MarkerType, Panel, VueFlow, useVueFlow } from '@vue-flow/core'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { MarkerType, Panel, SelectionMode, VueFlow, useVueFlow } from '@vue-flow/core'
 import '@vue-flow/core/dist/style.css'
 import '@vue-flow/core/dist/theme-default.css'
 import '../canvas.css'
@@ -13,7 +13,11 @@ import Select from '../components/Select.vue'
 import NumberField from '../components/NumberField.vue'
 
 const { t, lang } = useI18n()
-const { zoomIn, zoomOut, fitView } = useVueFlow()
+// The store handle, not just the helpers: alignment needs each node's measured box
+// (`dimensions`) and its resolved flow position (`computedPosition`), which the model
+// array we author does not carry.
+const vf = useVueFlow()
+const { zoomIn, zoomOut, fitView } = vf
 
 const models = ref(null)
 const templates = ref([])
@@ -30,6 +34,7 @@ const editing = ref(null)
 const selEdge = ref(null)
 const zoom = ref(null)
 const dirty = ref(false)
+const stageEl = ref(null)
 
 let seq = 0
 let timer = null
@@ -80,9 +85,57 @@ function reframe() {
   nextTick(() => fitView({ padding: 0.08, maxZoom: 1.1, duration: 240 }))
 }
 
-// Opening the step drawer takes 420px from the stage, which would leave the tail of the
-// chain behind the panel.
-watch(editing, () => reframe())
+// ------------------------------------------------------------------ alignment
+// The bounds are the union of the selected cards' measured boxes, so aligning is
+// "flush to the group's own edge", not to an invisible grid -- which is what a chain
+// dragged by hand actually needs.
+const picked = computed(() => vf.nodes.value.filter((n) => n.selected))
+const ALIGN = [['left', 'alignLeft'], ['center-h', 'alignCenterH'], ['right', 'alignRight'],
+               ['top', 'alignTop'], ['center-v', 'alignCenterV'], ['bottom', 'alignBottom']]
+// Equal gaps only means something with three or more cards, so the button is not offered
+// at two rather than sitting there disabled.
+const aligns = computed(() => (picked.value.length >= 3 ? [...ALIGN, ['distribute-h', 'distributeH']] : ALIGN))
+
+function align(how) {
+  const box = picked.value.map((n) => ({
+    id: n.id, x: n.computedPosition.x, y: n.computedPosition.y,
+    w: n.dimensions.width, h: n.dimensions.height,
+  }))
+  if (box.length < 2) return
+  const L = Math.min(...box.map((b) => b.x))
+  const R = Math.max(...box.map((b) => b.x + b.w))
+  const T = Math.min(...box.map((b) => b.y))
+  const B = Math.max(...box.map((b) => b.y + b.h))
+  const put = (id, x, y) => {
+    const m = nodes.value.find((n) => n.id === id)
+    if (m) m.position = { x: Math.round(x), y: Math.round(y) }
+  }
+  if (how === 'distribute-h') {
+    // Ends stay put; the gaps between become equal. Widths differ per template, so the
+    // free space is measured after subtracting every card's own width.
+    const s = [...box].sort((a, b) => a.x - b.x)
+    const gap = (s.at(-1).x + s.at(-1).w - s[0].x - s.reduce((a, b) => a + b.w, 0)) / (s.length - 1)
+    let x = s[0].x
+    for (const b of s) { put(b.id, x, b.y); x += b.w + gap }
+  } else {
+    for (const b of box) {
+      const x = how === 'left' ? L : how === 'right' ? R - b.w : how === 'center-h' ? (L + R) / 2 - b.w / 2 : b.x
+      const y = how === 'top' ? T : how === 'bottom' ? B - b.h : how === 'center-v' ? (T + B) / 2 - b.h / 2 : b.y
+      put(b.id, x, y)
+    }
+  }
+  dirty.value = true
+}
+
+const ICON = {
+  left: '<path d="M1.6 1.8v12.4"/><rect x="4.2" y="3.6" width="9.4" height="3.4" rx=".8"/><rect x="4.2" y="9" width="6.2" height="3.4" rx=".8"/>',
+  'center-h': '<path d="M8 1.4v13.2"/><rect x="3.4" y="3.6" width="9.2" height="3.4" rx=".8"/><rect x="5.6" y="9" width="4.8" height="3.4" rx=".8"/>',
+  right: '<path d="M14.4 1.8v12.4"/><rect x="2.4" y="3.6" width="9.4" height="3.4" rx=".8"/><rect x="5.6" y="9" width="6.2" height="3.4" rx=".8"/>',
+  top: '<path d="M1.8 1.6h12.4"/><rect x="3.6" y="4.2" width="3.4" height="9.4" rx=".8"/><rect x="9" y="4.2" width="3.4" height="6.2" rx=".8"/>',
+  'center-v': '<path d="M1.4 8h13.2"/><rect x="3.6" y="3.4" width="3.4" height="9.2" rx=".8"/><rect x="9" y="5.6" width="3.4" height="4.8" rx=".8"/>',
+  bottom: '<path d="M1.8 14.4h12.4"/><rect x="3.6" y="2.4" width="3.4" height="9.4" rx=".8"/><rect x="9" y="5.6" width="3.4" height="6.2" rx=".8"/>',
+  'distribute-h': '<rect x="1.4" y="4" width="3.6" height="8" rx=".8"/><rect x="6.2" y="4" width="3.6" height="8" rx=".8"/><rect x="11" y="4" width="3.6" height="8" rx=".8"/><path d="M5.2 8h.8M10 8h.8"/>',
+}
 
 function delNode(id) {
   nodes.value = nodes.value.filter((n) => n.id !== id)
@@ -313,7 +366,23 @@ async function boot() {
   }
 }
 boot()
-onBeforeUnmount(stop)
+
+// The stage changes size when the window does, and a fitted chain stops being fitted at
+// the new width: at 1600 two of three cards were in view until something else reframed.
+// Debounced because a drag-resize fires per frame, and the first callback is the observe.
+let ro = null, roTimer = null, roW = 0
+onMounted(() => {
+  roW = stageEl.value?.getBoundingClientRect().width || 0
+  ro = new ResizeObserver(([e]) => {
+    const w = e.contentRect.width
+    if (Math.abs(w - roW) < 24) return
+    roW = w
+    clearTimeout(roTimer)
+    roTimer = setTimeout(reframe, 250)
+  })
+  if (stageEl.value) ro.observe(stageEl.value)
+})
+onBeforeUnmount(() => { stop(); ro?.disconnect(); clearTimeout(roTimer) })
 </script>
 
 <template>
@@ -340,7 +409,7 @@ onBeforeUnmount(stop)
     </div>
     <p v-if="err" class="drift">{{ err }}</p>
 
-    <div class="flowpage" :class="{ drawer: !!editingNode }">
+    <div class="flowpage">
       <aside class="palette">
         <div class="phead">{{ t.canvasPalette }}</div>
         <input v-model="query" class="mini" :placeholder="t.search" />
@@ -358,14 +427,13 @@ onBeforeUnmount(stop)
         </div>
       </aside>
 
-      <div class="stage">
+      <div class="stage" ref="stageEl">
         <VueFlow
           v-model:nodes="nodes"
           v-model:edges="edges"
           :is-valid-connection="canConnect"
           :delete-key-code="null"
-          :snap-to-grid="true"
-          :snap-grid="[8, 8]"
+          :selection-mode="SelectionMode.Partial"
           :min-zoom="0.2"
           :max-zoom="2"
           :default-viewport="{ zoom: 0.85 }"
@@ -380,10 +448,21 @@ onBeforeUnmount(stop)
                       @edit="editing = $event" @del="delNode" @zoom="onZoom" />
           </template>
 
-          <Panel position="bottom-left" class="zoomer">
-            <button class="zb" :title="t.canvasZoomIn" @click="zoomIn()">＋</button>
-            <button class="zb" :title="t.canvasZoomOut" @click="zoomOut()">－</button>
-            <button class="zb" :title="t.canvasFit" @click="reframe()">▣</button>
+          <Panel position="bottom-left" class="toolbar">
+            <span class="zoomer">
+              <button class="zb" :title="t.canvasZoomIn" @click="zoomIn()">＋</button>
+              <button class="zb" :title="t.canvasZoomOut" @click="zoomOut()">－</button>
+              <button class="zb" :title="t.canvasFit" @click="reframe()">▣</button>
+            </span>
+            <!-- One strip, left-aligned: bottom-centre put the last button under the
+                 parameter overlay whenever both were open. -->
+            <template v-if="picked.length >= 2">
+              <i class="tdiv" />
+              <span class="alabel" :title="t.alignHow">{{ t.alignTitle }} {{ picked.length }}</span>
+              <button v-for="[how, key] in aligns" :key="how" class="ab" :title="t[key]" @click="align(how)">
+                <svg viewBox="0 0 16 16" aria-hidden="true" v-html="ICON[how]" />
+              </button>
+            </template>
           </Panel>
 
           <Panel v-if="pickedEdge" position="top-center" class="wire">
@@ -397,11 +476,11 @@ onBeforeUnmount(stop)
           </Panel>
         </VueFlow>
         <p v-if="!nodes.length" class="hint0">{{ t.canvasEmptyHint }}</p>
-      </div>
 
-      <ParamPanel v-if="editingNode" :template="editingNode.data.tpl" :params="editingNode.data.params"
-                  :models="models?.catalog" :err="err" :show-run="false"
-                  @close="editing = null" @del="editing && delNode(editing)" />
+        <ParamPanel v-if="editingNode" :template="editingNode.data.tpl" :params="editingNode.data.params"
+                    :models="models?.catalog" :err="err" :show-run="false"
+                    @close="editing = null" @del="editing && delNode(editing)" />
+      </div>
     </div>
 
     <Lightbox v-if="zoom" :title="t.variants" :code="''" :files="zoom.files" :index="zoom.index"

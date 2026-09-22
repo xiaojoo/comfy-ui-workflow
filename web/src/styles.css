@@ -718,7 +718,20 @@ figcaption { font-family: var(--mono); font-size: 10px; color: var(--muted); mar
 .fn.s-error .st { color: var(--bad); }
 .fn .err { color: var(--bad); font-size: 10.5px; line-height: 1.4; overflow-wrap: anywhere;
            max-height: 46px; overflow: hidden; }
+/* One strip, left-aligned: zoom on the left, and the align group joins it while two or
+   more steps are selected. */
+.toolbar { display: flex; align-items: center; gap: 6px; padding: 5px 8px; background: var(--panel-2);
+           border: 1px solid var(--line-2); border-radius: 8px; }
 .zoomer { display: flex; gap: 4px; }
+.tdiv { width: 1px; height: 18px; background: var(--line-2); flex: none; }
+/* The strip names its own subject, because acting on "the selection" is not something a
+   bare icon may assume. */
+.alabel { font-size: 11px; color: var(--muted); white-space: nowrap; }
+.ab { display: grid; place-items: center; width: 26px; height: 26px; padding: 0;
+      background: transparent; border: 1px solid transparent; border-radius: 6px; color: var(--muted); }
+.ab svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.3;
+          stroke-linecap: round; stroke-linejoin: round; }
+.ab:hover:not(:disabled) { filter: none; background: #1c2b49; border-color: var(--line-2); color: var(--fg); }
 .zb { width: 26px; height: 26px; padding: 0; font-size: 13px; line-height: 1; background: var(--panel-2);
       border-color: var(--line-2); color: var(--fg); border-radius: 6px; }
 .zb:hover:not(:disabled) { filter: none; background: #1c2b49; }
