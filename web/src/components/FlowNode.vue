@@ -31,6 +31,15 @@ const shot = computed(() => {
 })
 const isClip = computed(() => /\.(mp4|webm|mov)$/i.test(shot.value?.filename || ''))
 const changed = computed(() => props.data.changed || [])
+// What this step was told to do beyond one plain run, shown on the card so the plan is
+// readable without opening the drawer.
+const pol = computed(() => {
+  const d = props.data, out = []
+  if ((d.repeat || 1) > 1) out.push(t.value.canvasBadgeRepeat.replace('{n}', d.repeat))
+  if (d.retries) out.push(t.value.canvasBadgeRetry.replace('{n}', d.retries))
+  if (d.on_error === 'skip') out.push(t.value.canvasBadgeSkip)
+  return out
+})
 // The ✕ is revealed under the pointer, not by :hover -- Chrome was measured holding
 // stale :hover sets across siblings in this app already.
 const hot = ref(false)
@@ -55,6 +64,7 @@ const hot = ref(false)
       <i v-for="c in changed" :key="c.k">{{ c.k }} {{ c.v }}</i>
     </p>
     <p v-else class="ch def">{{ t.canvasUsesDefaults }}</p>
+    <p v-if="pol.length" class="pol"><i v-for="p in pol" :key="p">{{ p }}</i></p>
 
     <div v-if="inPorts.length" class="pins">
       <span v-for="p in inPorts" :key="p.name" class="pin">{{ p.name }}</span>
@@ -72,6 +82,9 @@ const hot = ref(false)
       <span class="st">{{ t.canvasState[state] }}</span>
       <span v-if="state === 'running'" class="pg">{{ step.progress }}%</span>
       <span v-else-if="step.seconds" class="pg">{{ step.seconds.toFixed(1) }}s</span>
+      <!-- Only worth saying when it retried: the number is the reason a step took twice
+           as long as its own budget. -->
+      <span v-if="step.attempts > 1" class="pg">{{ t.canvasTried }} {{ step.attempts }}</span>
       <button class="ed" @click.stop="emit('edit', id)">{{ t.canvasParams }}</button>
     </footer>
     <p v-if="step.error" class="err">{{ step.error }}</p>

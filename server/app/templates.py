@@ -631,5 +631,8 @@ def public():
              "desc": t["desc"], "desc_en": t["desc_en"], "fields": t["fields"],
              "defaults": {k: v for k, v in t["defaults"].items() if k != "style"},
              "verified": t["verified"], "model": t["model"], "model_en": t["model_en"],
-             "media": t["media"], "spec": t["spec"], "sizes": t.get("sizes"), "ports": ports_of(t)}
+             "media": t["media"], "spec": t["spec"], "sizes": t.get("sizes"), "ports": ports_of(t),
+             # The browser shows how long one attempt may take, so a step configured to
+             # run nine times cannot be a surprise about how long that can cost.
+             "timeout": t.get("timeout", 900)}
             for t in TEMPLATES]

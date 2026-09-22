@@ -51,7 +51,7 @@ const palette = computed(() => templates.value.filter((x) => {
   return [x.name, x.name_en, x.desc, x.desc_en].join(' ').toLowerCase().includes(q)
 }))
 
-const running = computed(() => !!run.value && ['queued', 'running'].includes(run.value.state))
+const running = computed(() => !!run.value && ['queued', 'running', 'cancelling'].includes(run.value.state))
 const busy = computed(() => running.value || !nodes.value.length)
 
 const flowOptions = computed(() => flows.value.map((f) => ({
@@ -173,13 +173,19 @@ function onConnect(c) {
   dirty.value = true
 }
 
-function mkEdge(source, sourceHandle, target, targetHandle, index) {
+// The wire's own tag: which result of which repetition. Language-neutral because it is
+// drawn on the wire, where a translated word would not fit.
+function edgeLabel(attempt, index) {
+  return `${attempt ? `r${attempt + 1}·` : ''}#${index + 1}`
+}
+
+function mkEdge(source, sourceHandle, target, targetHandle, index, attempt = 0) {
   return {
     id: `e-${source}-${sourceHandle}-${target}-${targetHandle}`,
     source, target, sourceHandle, targetHandle,
     type: 'smoothstep',
-    data: { index },
-    label: `#${index + 1}`,
+    data: { index, attempt },
+    label: edgeLabel(attempt, index),
     labelBgPadding: [4, 2], labelBorderRadius: 0,
     style: { stroke: '#2a3a5c', strokeWidth: 1.6 },
     markerEnd: { type: MarkerType.ArrowClosed, width: 12, height: 12, color: '#2a3a5c' },
@@ -201,7 +207,19 @@ const pickedFrame = computed({
     const e = pickedEdge.value
     if (!e) return
     e.data.index = Math.min(Math.max(0, Math.round(v) - 1), pickedMax.value - 1)
-    e.label = `#${e.data.index + 1}`
+    e.label = edgeLabel(e.data.attempt ?? 0, e.data.index)
+    dirty.value = true
+  },
+})
+// How many repetitions the upstream step was told to make -- the ceiling for 第几遍.
+const pickedRepMax = computed(() => pickedSource.value?.data?.repeat || 1)
+const pickedAttempt = computed({
+  get: () => (pickedEdge.value?.data.attempt ?? 0) + 1,
+  set: (v) => {
+    const e = pickedEdge.value
+    if (!e) return
+    e.data.attempt = Math.min(Math.max(0, Math.round(v) - 1), pickedRepMax.value - 1)
+    e.label = edgeLabel(e.data.attempt, e.data.index ?? 0)
     dirty.value = true
   },
 })
@@ -245,8 +263,8 @@ function decorate() {
 // Watching the arrays themselves would re-fire on everything decorate writes; this
 // signature leaves those fields out, so the pass runs once per authored change.
 const authored = computed(() => [
-  nodes.value.map((n) => `${n.id}|${JSON.stringify(n.data.params)}`).join('#'),
-  edges.value.map((e) => `${e.source}>${e.target}:${e.targetHandle}:${e.data.index}`).join('#'),
+  nodes.value.map((n) => `${n.id}|${JSON.stringify(n.data.params)}|${n.data.repeat}|${n.data.retries}|${n.data.on_error}`).join('#'),
+  edges.value.map((e) => `${e.source}>${e.target}:${e.targetHandle}:${e.data.index}:${e.data.attempt ?? 0}`).join('#'),
 ].join('||'))
 watch(authored, decorate)
 
@@ -254,10 +272,16 @@ function toGraph() {
   return {
     nodes: nodes.value.map((n) => ({
       id: n.id, template: n.data.tpl.id, params: n.data.params,
+      // Only a step that deviates from "no retry, stop the chain" says so: an untouched
+      // canvas keeps the shape it was authored with.
+      ...(n.data.retries ? { retries: n.data.retries } : {}),
+      ...(n.data.on_error && n.data.on_error !== 'stop' ? { on_error: n.data.on_error } : {}),
+      ...(n.data.repeat > 1 ? { repeat: n.data.repeat } : {}),
       position: { x: Math.round(n.position.x), y: Math.round(n.position.y) },
     })),
     edges: edges.value.map((e) => ({
       from: e.source, out: e.sourceHandle, to: e.target, in: e.targetHandle, index: e.data.index ?? 0,
+      ...(e.data.attempt ? { attempt: e.data.attempt } : {}),
     })),
   }
 }
@@ -267,9 +291,10 @@ function fromGraph(g, tplById) {
     const tpl = tplById[n.template]
     return { id: n.id, type: 'step', position: { ...n.position },
              data: { tpl, params: { ...clone(tpl.defaults), ...n.params }, order: 0, run: null,
-                     changed: [], pickIdx: 0 } }
+                     changed: [], pickIdx: 0, retries: n.retries || 0, on_error: n.on_error || 'stop',
+                     repeat: n.repeat || 1 } }
   })
-  edges.value = (g.edges || []).map((e) => mkEdge(e.from, e.out, e.to, e.in, e.index ?? 0))
+  edges.value = (g.edges || []).map((e) => mkEdge(e.from, e.out, e.to, e.in, e.index ?? 0, e.attempt ?? 0))
 }
 
 async function loadFlows() {
@@ -340,7 +365,20 @@ async function poll(ref) {
   const st = await api.flowRun(ref || run.value?.run)
   run.value = st
   decorate()
-  if (['done', 'error'].includes(st.state)) stop()
+  if (['done', 'error', 'cancelled', 'partial'].includes(st.state)) stop()
+}
+
+// Cancelling is a request, not a stop: the worker sees it between its polls, so the bar
+// says 正在取消 until the run row itself changes.
+async function cancel() {
+  if (!run.value?.run) return
+  try {
+    await api.cancelFlowRun(run.value.run)
+    err.value = ''
+    await poll()   // the reply is only the flag; the steps still come from the run row
+  } catch (e) {
+    err.value = e.message
+  }
 }
 
 function stop() {
@@ -401,6 +439,9 @@ onBeforeUnmount(() => { stop(); ro?.disconnect(); clearTimeout(roTimer) })
       <button class="ghost" :disabled="!dirty" @click="save">{{ t.canvasSave }}</button>
       <button class="go" :disabled="busy" @click="go">
         ▶ {{ running ? t.canvasRunning : t.canvasRun }}
+      </button>
+      <button class="ghost" :disabled="!running" :title="t.canvasCancelHint" @click="cancel">
+        ■ {{ t.canvasCancel }}
       </button>
       <span v-if="run" class="rstate" :class="run.state">
         <i class="dot" />{{ t.canvasState[run.state] }}
@@ -470,6 +511,9 @@ onBeforeUnmount(() => { stop(); ro?.disconnect(); clearTimeout(roTimer) })
             <label class="wl">{{ t.canvasFrame }}
               <NumberField v-model="pickedFrame" :min="1" :max="pickedMax" :label="t.canvasFrame" />
             </label>
+            <label v-if="pickedRepMax > 1" class="wl">{{ t.canvasAttempt }}
+              <NumberField v-model="pickedAttempt" :min="1" :max="pickedRepMax" :label="t.canvasAttempt" />
+            </label>
             <span v-if="pickedName" class="wf">{{ pickedName }}</span>
             <button class="ghost sm" @click="delEdge(pickedEdge.id)">{{ t.canvasDelWire }}</button>
             <button class="ghost sm" :title="t.close" @click="selEdge = null">✕</button>
@@ -478,8 +522,8 @@ onBeforeUnmount(() => { stop(); ro?.disconnect(); clearTimeout(roTimer) })
         <p v-if="!nodes.length" class="hint0">{{ t.canvasEmptyHint }}</p>
 
         <ParamPanel v-if="editingNode" :template="editingNode.data.tpl" :params="editingNode.data.params"
-                    :models="models?.catalog" :err="err" :show-run="false"
-                    @close="editing = null" @del="editing && delNode(editing)" />
+                    :models="models?.catalog" :err="err" :show-run="false" :policy="editingNode.data"
+                    @close="editing = null" @del="editing && delNode(editing)" @policy="dirty = true" />
       </div>
     </div>
 

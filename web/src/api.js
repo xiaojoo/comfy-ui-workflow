@@ -37,6 +37,7 @@ export const api = {
   deleteFlow: (id) => req('DELETE', `/flows/${id}`),
   runFlow: (id) => req('POST', `/flows/${id}/run`),
   flowRun: (ref) => req('GET', `/flows/runs/${ref}`),
+  cancelFlowRun: (ref) => req('POST', `/flows/runs/${ref}/cancel`),
   batches: (limit = 50) => req('GET', `/batches?limit=${limit}`),
   batch: (id) => req('GET', `/batches/${id}`),
   gate: (id) => req('GET', `/batches/${id}/gate`),

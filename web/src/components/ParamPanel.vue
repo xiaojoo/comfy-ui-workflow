@@ -11,13 +11,38 @@ const props = defineProps({ template: Object, params: Object, models: Object, re
                            // The card's own cover, handed over so the header shows the same
                            // picture the row shows rather than a second choice of its own.
                            coverShot: String,
+                           // The chain step's own failure policy, when this panel is editing a
+                           // step on the canvas rather than a single run from the list.
+                           policy: Object,
                            // The canvas uses this panel as a plain parameter form: ▶ 生成
                            // there would start one step of a chain nobody asked to run alone.
                            showRun: { type: Boolean, default: true } })
-const emit = defineEmits(['submit', 'close', 'route', 'del', 'meta'])
+const emit = defineEmits(['submit', 'close', 'route', 'del', 'meta', 'policy'])
 const { t } = useI18n()
 
 const tab = ref('basic')
+
+// A chain step is allowed to fail without taking the chain down with it; the ceiling is
+// the server's MAX_RETRY, and it is a ceiling because one attempt is a whole generation.
+const retryOptions = [0, 1, 2, 3].map((n) => ({ value: n, label: String(n) }))
+const repeatOptions = [1, 2, 3, 4, 6, 8].map((n) => ({ value: n, label: String(n) }))
+const onErrorOptions = computed(() => [
+  { value: 'stop', label: t.value.canvasStop }, { value: 'skip', label: t.value.canvasSkip }])
+
+// Say what the settings cost before anyone presses run: repetitions times attempts,
+// against the template's own per-run budget.
+const worstCase = computed(() => {
+  const rep = props.policy?.repeat ?? 1
+  const tries = 1 + (props.policy?.retries ?? 0)
+  const mins = Math.round((props.template?.timeout || 900) / 60)
+  return t.value.canvasWorst.replace(/\{(\w+)\}/g, (_, k) => ({ rep, tries, n: rep * tries, mins })[k])
+})
+
+function setPolicy(key, value) {
+  if (!props.policy) return
+  props.policy[key] = value
+  emit('policy')
+}
 
 // ---------------------------------------------------------------- the workflow file
 // The same graph POST /tasks submits, as the two files ComfyUI knows. Fetched lazily:
@@ -330,6 +355,9 @@ function go() {
     <div class="dtabs">
       <button class="ghost sm" :class="{ on: tab === 'basic' }" @click="tab = 'basic'">{{ t.drawerParams }}</button>
       <button class="ghost sm" :class="{ on: tab === 'adv' }" @click="tab = 'adv'">{{ t.drawerAdvanced }}</button>
+      <button v-if="!showRun" class="ghost sm" :class="{ on: tab === 'step' }" @click="tab = 'step'">
+        {{ t.drawerStep }}
+      </button>
       <button v-if="showRun" class="ghost sm" :disabled="comfy === 'busy'" @click="openInComfy">
         {{ comfy === 'busy' ? t.jsonOpening : comfy === 'ok' ? t.jsonOpened : t.jsonOpen }}
       </button>
@@ -483,12 +511,32 @@ function go() {
         <pre v-if="pretty" class="jsonbox">{{ pretty }}</pre>
       </div>
 
-      <div v-else class="adv">
+      <div v-else-if="tab === 'adv'" class="adv">
         <label class="inrow">{{ t.shift }}<NumberField v-model="params.shift" :step="0.5" :label="t.shift" /></label>
         <label class="inrow">{{ t.sampler }}<Select v-model="params.sampler" :options="samplerOptions" :label="t.sampler" /></label>
         <label class="inrow">{{ t.scheduler }}<Select v-model="params.scheduler" :options="schedulerOptions" :label="t.scheduler" /></label>
         <label class="inrow">{{ t.denoise }}<NumberField v-model="params.denoise" :step="0.05" :label="t.denoise" /></label>
         <p class="hint">高级参数只在模板声明了对应节点时才生效。</p>
+      </div>
+
+      <!-- Only a step of a chain has a next step to fail forward into, so this tab exists
+           only where the panel is editing a canvas step. -->
+      <div v-else-if="tab === 'step'" class="stepwrap">
+        <label class="inrow">{{ t.canvasRepeat }}
+          <Select :model-value="policy?.repeat ?? 1" :options="repeatOptions" :label="t.canvasRepeat"
+                  @update:model-value="setPolicy('repeat', $event)" />
+        </label>
+        <label class="inrow">{{ t.canvasRetry }}
+          <Select :model-value="policy?.retries ?? 0" :options="retryOptions" :label="t.canvasRetry"
+                  @update:model-value="setPolicy('retries', $event)" />
+        </label>
+        <label class="inrow">{{ t.canvasOnErr }}
+          <Select :model-value="policy?.on_error || 'stop'" :options="onErrorOptions" :label="t.canvasOnErr"
+                  @update:model-value="setPolicy('on_error', $event)" />
+        </label>
+        <p class="jmeta">{{ worstCase }}</p>
+        <p class="hint">{{ t.canvasRepeatHint }}</p>
+        <p class="hint">{{ t.canvasRetryHint }}。{{ t.canvasOnErrHint }}。</p>
       </div>
 
       <p v-if="needPrompt" class="drift">{{ t.needPrompt }}</p>

@@ -385,11 +385,18 @@ def update_flow(flow_id: int, body: flows.FlowIn):
 
 @app.delete("/flows/{flow_id}")
 def delete_flow(flow_id: int):
-    """Forget the arrangement. Its runs stay: they are the record of what was generated."""
+    """Forget the arrangement and its run bookkeeping. The Tasks stay -- they are the
+    record of what was generated, and the results track reads them.
+
+    The runs go with it because SQLite hands the same id back to the next canvas, and a
+    fresh chain that opens showing somebody else's 部分完成 is worse than no history.
+    """
     with Session() as s:
         f = s.get(Flow, flow_id)
         if f is None:
             raise HTTPException(404, "没有这条画布")
+        for r in s.scalars(select(FlowRun).where(FlowRun.flow_id == flow_id)):
+            s.delete(r)
         s.delete(f)
         s.commit()
         return {"deleted": flow_id}
@@ -398,3 +405,9 @@ def delete_flow(flow_id: int):
 @app.post("/flows/{flow_id}/run", status_code=202)
 def run_flow(flow_id: int):
     return flows.start(flow_id)
+
+
+@app.post("/flows/runs/{run_ref}/cancel")
+def cancel_flow_run(run_ref: str):
+    """Stop a live chain: the step in flight gives up the engine, the rest never start."""
+    return flows.cancel(run_ref)

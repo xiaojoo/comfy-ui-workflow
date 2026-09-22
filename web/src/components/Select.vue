@@ -1,3 +1,9 @@
+<script>
+// One list open at a time: two panels land on the same spot, and the one behind keeps
+// taking pointer events while being unreachable.
+let closeOther = null
+</script>
+
 <script setup>
 import { computed, nextTick, onBeforeUnmount, ref, useId } from 'vue'
 
@@ -12,6 +18,9 @@ const emit = defineEmits(['update:modelValue'])
 // an overflow container, so a list rendered in place would be clipped at its edge.
 const uid = useId()
 const ROW = 32
+// The gap between options, mirrored in the CSS below: leaving it out of the height made
+// a list that fits exactly overflow and paint a scrollbar for nothing.
+const GAP = 4
 // The panel's own 6px padding (x2) and 1px border (x2): box-sizing is border-box, so
 // these live inside max-height. Leaving the border out made a list that fits exactly
 // overflow by 2px and paint a scrollbar for no reason.
@@ -28,7 +37,7 @@ const optId = (i) => `${uid}-o${i}`
 
 function place() {
   const r = btn.value.getBoundingClientRect()
-  const need = props.options.length * ROW + INSET
+  const need = props.options.length * ROW + Math.max(0, props.options.length - 1) * GAP + INSET
   const below = window.innerHeight - r.bottom - 12
   const above = r.top - 12
   const up = below < Math.min(MAXH, need) && above > below
@@ -40,6 +49,8 @@ function place() {
 }
 
 async function show() {
+  if (closeOther && closeOther !== hide) closeOther()
+  closeOther = hide
   active.value = Math.max(0, props.options.findIndex((o) => o.value === props.modelValue))
   open.value = true
   await nextTick()
@@ -62,6 +73,7 @@ function onScroll(e) {
 }
 
 function hide() {
+  if (closeOther === hide) closeOther = null
   open.value = false
   document.removeEventListener('pointerdown', outside, true)
   document.removeEventListener('scroll', onScroll, true)

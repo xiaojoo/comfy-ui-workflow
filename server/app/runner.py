@@ -93,6 +93,10 @@ class Runner:
             t = s.get(Task, task_id)
             if t is None:
                 return
+            if t.state != "queued":
+                # Called off while it waited its turn (a cancelled chain step): starting
+                # here would put a job on the GPU that nobody is waiting for any more.
+                return
             tpl = templates.BY_ID[t.template]
             t.state, t.progress = "running", 5
             t.log = [_entry("任务开始")]

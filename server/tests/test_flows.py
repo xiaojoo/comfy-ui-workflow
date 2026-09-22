@@ -7,17 +7,20 @@ message, and the happy path is asserted by *which file reached the engine*.
 """
 
 import time
+import threading
 from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy import select
 
+from app import flows
 from app import runner as runner_mod
 from app import templates
 from app.db import Session
 from app.flows import _order, validate
 from app.main import app
-from app.models import Task
+from app.models import Flow, FlowRun, Task
 
 
 def node(nid, tpl, **params):
@@ -172,6 +175,22 @@ def test_chain_hands_the_chosen_picture_to_the_next_step(tmp_path, monkeypatch):
             assert clip.params["image_task"] == ids[1] and clip.params.get("image_index", 0) == 0
 
 
+def test_deleting_a_canvas_takes_its_run_bookkeeping_with_it():
+    """SQLite gives the id back to the next canvas; the old run must not follow it there."""
+    with Session() as s:
+        f = Flow(name="gone", graph={})
+        s.add(f)
+        s.commit()
+        fid = f.id
+        s.add(FlowRun(flow_id=fid, ref="run_orphan", state="done", steps=[]))
+        s.commit()
+    with TestClient(app) as c:
+        assert c.get(f"/flows/{fid}").json()["runs"]
+        assert c.delete(f"/flows/{fid}").status_code == 200
+        with Session() as s:
+            assert s.scalar(select(FlowRun).where(FlowRun.ref == "run_orphan")) is None
+
+
 def test_a_step_that_refuses_to_start_stops_the_chain(tmp_path, monkeypatch):
     """No task may be created for a step whose input never arrived."""
     def fake_submit(graph, client_id):
@@ -195,3 +214,229 @@ def test_a_step_that_refuses_to_start_stops_the_chain(tmp_path, monkeypatch):
         assert st["state"] == "error" and "n1" in st["error"]
         assert [s["task_id"] for s in st["steps"]] == [st["steps"][0]["task_id"], None, None]
         assert st["steps"][0]["state"] == "error"
+
+
+# ------------------------------------------------------- what a step does when it fails
+
+def step(nid, tpl, retries=0, on_error="stop", repeat=1, **params):
+    return {"id": nid, "template": tpl, "params": params, "position": {"x": 0, "y": 0},
+            "retries": retries, "on_error": on_error, "repeat": repeat}
+
+
+def fake_engine(monkeypatch, tmp_path, fail=None, count=None):
+    """A stand-in engine. `fail` is how many attempts of each step kind come back as error."""
+    fail, count, attempts, kind_of = fail or {}, count or {}, {}, {}
+
+    def submit(graph, client_id):
+        kind_of[client_id] = _kinds_of(graph)
+        return client_id
+
+    def collect(pid, timeout=900):
+        kind = kind_of[pid]
+        attempts[kind] = attempts.get(kind, 0) + 1
+        if attempts[kind] <= fail.get(kind, 0):
+            return "error", [], 0.1
+        files = []
+        for i in range(count.get(kind, 1)):
+            name = f"{kind}_{i}.{'mp4' if kind == 'clip' else 'png'}"
+            (tmp_path / name).write_bytes(b"\x89PNG\r\n\x1a\n")
+            files.append({"subfolder": "", "filename": name, "type": "output"})
+        return "success", files, 0.1
+
+    monkeypatch.setattr(runner_mod, "COMFY_OUTPUT_ROOT", tmp_path)
+    monkeypatch.setattr(runner_mod.comfy, "submit", submit)
+    monkeypatch.setattr(runner_mod.comfy, "collect", collect)
+    monkeypatch.setattr(runner_mod.comfy, "upload", lambda src, name=None: Path(src).name)
+    return attempts
+
+
+def settle(c, run, secs=40):
+    deadline = time.time() + secs
+    while time.time() < deadline:
+        st = c.get(f"/flows/runs/{run}").json()
+        if st["state"] in ("done", "error", "cancelled", "partial"):
+            return st
+        time.sleep(0.2)
+    raise AssertionError(f"这次运行停在 {st['state']}：{st}")
+
+
+def run_chain(graph):
+    with TestClient(app) as c:
+        fid = c.post("/flows", json={"name": "chain", "graph": graph}).json()["flow_id"]
+        return settle(c, c.post(f"/flows/{fid}/run").json()["run"])
+
+
+def test_a_retry_submits_a_different_picture(tmp_path, monkeypatch):
+    """The load-bearing detail: a resubmitted seed is answered from the engine's cache.
+
+    Measured on the live engine -- identical graph, `seconds` 0.0 and the output filename
+    does not advance -- so a retry that keeps the seed would report two attempts and show
+    the same picture twice.
+    """
+    attempts = fake_engine(monkeypatch, tmp_path, fail={"portrait": 1})
+    st = run_chain({"nodes": [step("n1", "char_portrait", retries=2, prompt="x")], "edges": []})
+    assert st["state"] == "done", st
+    assert st["steps"][0]["attempts"] == 2 and attempts["portrait"] == 2
+    with Session() as s:
+        # Only this run's two attempts: the shared test database still holds the other
+        # tests' tasks, and the step's own output folder is what identifies them.
+        rid = s.scalar(select(FlowRun.id).where(FlowRun.ref == st["run"]))
+        mine = f"studio/run{rid}/"
+        seeds = [t.params["seed"] for t in s.scalars(select(Task).where(Task.template == "char_portrait"))
+                 if str(t.params.get("prefix", "")).startswith(mine)]
+    assert len(seeds) == 2 and seeds[0] != seeds[1], f"两次同一个 seed = 白重试一次：{seeds}"
+
+
+def test_a_step_that_never_lands_stops_the_chain_after_its_retries(tmp_path, monkeypatch):
+    fake_engine(monkeypatch, tmp_path, fail={"portrait": 9})
+    graph = {"nodes": [step("n1", "char_portrait", retries=2, prompt="x"),
+                       step("n2", "upscale_image")],
+             "edges": [edge("n1", "n2", "image", "image")]}
+    st = run_chain(graph)
+    assert st["state"] == "error" and "一共提了 3 次" in st["error"], st
+    assert st["steps"][0]["attempts"] == 3
+    assert st["steps"][1]["task_id"] is None and st["steps"][1]["state"] == "pending"
+
+
+def test_a_failed_step_can_be_walked_past(tmp_path, monkeypatch):
+    """on_error=skip: the step is written off, the chain says how far it got."""
+    fake_engine(monkeypatch, tmp_path, fail={"portrait": 9})
+    graph = {"nodes": [step("n1", "char_portrait", on_error="skip", prompt="x"),
+                       step("n2", "upscale_image")],
+             "edges": [edge("n1", "n2", "image", "image")]}
+    st = run_chain(graph)
+    assert st["state"] == "partial", st
+    assert st["steps"][0]["state"] == "error" and st["steps"][0]["error"]
+    assert st["steps"][1]["task_id"] is None and st["steps"][1]["state"] == "skipped"
+    assert "上游" in st["steps"][1]["error"] and "n1" in st["steps"][1]["error"]
+
+
+def test_a_branch_whose_sibling_was_walked_past_is_skipped_too(tmp_path, monkeypatch):
+    """Two steps on one chain: the one past the gap must not be handed a missing file."""
+    fake_engine(monkeypatch, tmp_path, fail={"portrait": 9})
+    graph = {"nodes": [step("n1", "char_portrait", on_error="skip", prompt="x"),
+                       step("n2", "upscale_image"), step("n3", "upscale_image")],
+             "edges": [edge("n1", "n2", "image", "image"), edge("n2", "n3", "image", "image")]}
+    st = run_chain(graph)
+    assert [s["state"] for s in st["steps"]] == ["error", "skipped", "skipped"]
+    assert "n2" in st["steps"][2]["error"], "the reason names which upstream is gone"
+
+
+def test_a_step_can_run_several_times_and_a_wire_picks_which_time(tmp_path, monkeypatch):
+    """循环: N repetitions of one step, and the downstream says which one it feeds from."""
+    fake_engine(monkeypatch, tmp_path, count={"portrait": 1, "hd": 1})
+    graph = {"nodes": [step("n1", "char_portrait", repeat=3, prompt="x"), step("n2", "upscale_image")],
+             "edges": [edge("n1", "n2", "image", "image")]}
+    graph["edges"][0]["attempt"] = 1
+    st = run_chain(graph)
+    assert st["state"] == "done", st
+    runs = st["steps"][0]["runs"]
+    assert [r["state"] for r in runs] == ["done"] * 3 and len({r["task_id"] for r in runs}) == 3
+    assert st["steps"][0]["attempts"] == 3
+    with Session() as s:
+        seeds = [s.get(Task, r["task_id"]).params["seed"] for r in runs]
+        hd = s.get(Task, st["steps"][1]["task_id"])
+    assert len(set(seeds)) == 3, f"三遍同一个 seed 只会得到同一张图：{seeds}"
+    assert hd.params["image_task"] == runs[1]["task_id"], "the wire takes the second repetition"
+    assert hd.params["image_index"] == 0
+
+
+def test_a_wire_pointing_at_a_repetition_that_never_ran_is_skipped(tmp_path, monkeypatch):
+    """Three repetitions asked for, the second one dies: there is no 第 2 遍 to take."""
+    fake_engine(monkeypatch, tmp_path, count={"portrait": 1, "hd": 1}, fail={"portrait": 2})
+    graph = {"nodes": [step("n1", "char_portrait", repeat=3, on_error="skip", prompt="x"),
+                       step("n2", "upscale_image")],
+             "edges": [dict(edge("n1", "n2", "image", "image"), attempt=1)]}
+    st = run_chain(graph)
+    assert st["steps"][0]["state"] == "error"
+    assert st["steps"][1]["state"] == "skipped"
+    assert "n1第2遍" in st["steps"][1]["error"], st["steps"][1]["error"]
+    assert st["state"] == "partial"
+
+
+@pytest.mark.parametrize("bad, says", [
+    (step("n1", "char_portrait", retries=9, prompt="x"), "0–3"),    (step("n1", "char_portrait", retries="2", prompt="x"), "0–3"),
+    (step("n1", "char_portrait", retries=True, prompt="x"), "0–3"),
+    (step("n1", "char_portrait", on_error="continue", prompt="x"), "stop、skip"),
+    (step("n1", "char_portrait", repeat=9, prompt="x"), "1–8"),
+    (step("n1", "char_portrait", repeat=0, prompt="x"), "1–8"),
+])
+def test_a_step_policy_that_cannot_be_honoured_is_refused_where_it_is_written(bad, says):
+    with pytest.raises(Exception) as e:
+        validate({"nodes": [bad], "edges": []})
+    assert says in str(e.value.detail), e.value.detail
+
+
+def test_a_wire_that_asks_for_a_repetition_beyond_the_ceiling_is_refused():
+    graph = {"nodes": [step("n1", "char_portrait", prompt="x"), step("n2", "upscale_image")],
+             "edges": [dict(edge("n1", "n2", "image", "image"), attempt=8)]}
+    with pytest.raises(Exception) as e:
+        validate(graph)
+    assert "1–8" in str(e.value.detail), e.value.detail
+
+
+def test_cancelling_a_chain_stops_where_it_is_and_gives_the_engine_back(tmp_path, monkeypatch):
+    """取消 has to reach the step in flight, not just the ones after it."""
+    hold = threading.Event()
+    dropped = []
+    monkeypatch.setattr(runner_mod.comfy, "submit", lambda graph, client_id: client_id)
+    # No timeout on the hold: the generation worker is shared and serial, so this fake may
+    # start long after the test began, and a capped wait would end the step as "error"
+    # before the cancel was ever noticed.
+    monkeypatch.setattr(runner_mod.comfy, "collect",
+                        lambda pid, timeout=900: (hold.wait(180), ("error", [], 0.1))[1])
+    monkeypatch.setattr(flows.comfy, "cancel", lambda pid: dropped.append(pid) or "removed")
+
+    graph = {"nodes": [step("n1", "char_portrait", prompt="x"), step("n2", "upscale_image")],
+             "edges": [edge("n1", "n2", "image", "image")]}
+    with TestClient(app) as c:
+        fid = c.post("/flows", json={"name": "chain", "graph": graph}).json()["flow_id"]
+        run = c.post(f"/flows/{fid}/run").json()["run"]
+        try:
+            deadline = time.time() + 90
+            while time.time() < deadline:
+                if c.get(f"/flows/runs/{run}").json()["steps"][0]["task_id"]:
+                    break
+                time.sleep(0.2)
+            assert c.post(f"/flows/runs/{run}/cancel").status_code == 200
+            st = settle(c, run, secs=90)
+        finally:
+            hold.set()
+
+        assert st["state"] == "cancelled", st
+        assert st["steps"][0]["error"] == "已取消这次运行"
+        assert st["steps"][1]["task_id"] is None, "the next step never became a task"
+        assert dropped == [f"studio-{st['steps'][0]['task_id']}"], "the engine job was let go"
+        assert c.post(f"/flows/runs/{run}/cancel").status_code == 409, "already over"
+
+
+def test_a_step_still_queued_is_settled_so_the_gpu_never_picks_it_up(monkeypatch):
+    """The runner takes tasks off its own worker; a cancelled one must not survive that."""
+    dropped = []
+    monkeypatch.setattr(flows.comfy, "cancel", lambda pid: dropped.append(pid) or "removed")
+    with Session() as s:
+        t = Task(template="char_portrait", title="x", model="m", params={}, state="queued")
+        s.add(t)
+        s.commit()
+        tid = t.id
+    flows._abandon(tid)
+    with Session() as s:
+        t = s.get(Task, tid)
+        assert t.state == "error" and "排队" in t.error
+    assert dropped == [], "nothing was submitted, so there is nothing to interrupt"
+
+
+def test_a_run_recorded_before_the_step_policy_still_reads():
+    """His existing rows carry four keys; the reader must not ask for the other three."""
+    with Session() as s:
+        f = Flow(name="old", graph={})
+        s.add(f)
+        s.commit()
+        s.add(FlowRun(flow_id=f.id, ref="run_legacy", state="done",
+                      steps=[{"node": "n1", "template": "char_portrait",
+                              "task_id": None, "error": None}]))
+        s.commit()
+    with TestClient(app) as c:
+        st = c.get("/flows/runs/run_legacy").json()
+    assert st["steps"][0]["state"] == "pending"
+    assert st["steps"][0]["attempts"] is None and st["steps"][0]["retries"] is None

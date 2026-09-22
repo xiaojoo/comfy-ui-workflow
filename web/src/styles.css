@@ -301,10 +301,11 @@ input[type=range] { padding: 0; accent-color: var(--accent); margin-top: 0; }
 .sel:focus-visible { outline: none; border-color: var(--accent); }
 .sel-pop {
   position: fixed; z-index: 60; padding: 6px; border-radius: 9px; overflow-y: auto;
+  display: flex; flex-direction: column; gap: 4px;
   background: var(--panel-2); border: 1px solid var(--line-2); box-shadow: 0 18px 44px #000b;
 }
 .sel-pop [role=option] {
-  display: block; width: 100%; height: 32px; margin: 0; padding: 0 9px; border: 0; border-radius: 6px;
+  display: block; flex: none; width: 100%; height: 32px; margin: 0; padding: 0 9px; border: 0; border-radius: 6px;
   background: transparent; color: var(--fg); font: inherit; font-size: 12.5px; text-align: left;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
@@ -348,6 +349,10 @@ button.fav { border-color: var(--warn); color: var(--warn); }
 /* The row's own label and cover. The picker is the .ff control the parameter form already
    uses, so an upload here looks like every other upload in the app. */
 .metawrap { display: flex; flex-direction: column; gap: 10px; }
+/* The step's run policy: same row shape as the advanced form, so the drawer reads as one
+   form rather than a settings page bolted onto a form. */
+.stepwrap { display: grid; gap: 10px; }
+.stepwrap .inrow { margin: 0; display: grid; grid-template-columns: 74px minmax(0, 1fr); align-items: center; gap: 8px; }
 .metawrap button.go { margin: auto 0 0; }
 /* A textarea left inline sits on the line's baseline and drags ~5px of descender space
    below itself, so every block after 说明 reads looser than the one after 名称. */
@@ -679,6 +684,9 @@ figcaption { font-family: var(--mono); font-size: 10px; color: var(--muted); mar
                      white-space: nowrap; max-width: 420px; }
 .flowbar .rstate.running { color: var(--accent-2); }
 .flowbar .rstate.done b { color: var(--ok); }
+/* A chain that gave up on some steps is neither green nor red, and "正在取消" must not
+   look finished: the worker still has to let go of the step in flight. */
+.flowbar .rstate.cancelling, .flowbar .rstate.partial { color: var(--warn); }
 
 /* Two tracks: palette | stage. The step's parameters overlay the stage's right edge
    instead of taking a third track -- a reserved track read as dead space when nothing was
@@ -742,6 +750,11 @@ figcaption { font-family: var(--mono); font-size: 10px; color: var(--muted); mar
             background: #16264d; border-radius: 4px; padding: 1px 5px; max-width: 100%;
             overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .fn .ch.def { color: var(--muted); font-size: 10.5px; }
+/* The step's own plan, one notch quieter than its parameter chips: it is about how the
+   step runs, not about what it draws. */
+.fn .pol { display: flex; flex-wrap: wrap; gap: 3px; margin: -3px 0 0; }
+.fn .pol i { font-style: normal; font-size: 10px; color: var(--accent-2);
+             background: #101d38; border: 1px solid #274079; border-radius: 4px; padding: 0 5px; }
 .fn .pins { display: flex; gap: 4px; margin-top: 5px; }
 .fn .pin { font-family: var(--mono); font-size: 9.5px; color: var(--muted);
            border: 1px solid var(--line-2); border-radius: 4px; padding: 0 4px; }
@@ -764,6 +777,11 @@ figcaption { font-family: var(--mono); font-size: 10px; color: var(--muted); mar
 .fn.s-error { border-color: #5a2330; }
 .fn.s-error .dot { background: var(--bad); box-shadow: 0 0 6px var(--bad); }
 .fn.s-error .st { color: var(--bad); }
+/* Walked past, not failed: this step never ran, so it must not wear the red border of one
+   that tried and lost. */
+.fn.s-skipped .dot { background: var(--warn); }
+.fn.s-skipped .st { color: var(--warn); }
+.fn.s-skipped .err { color: var(--warn); }
 .fn .err { color: var(--bad); font-size: 10.5px; line-height: 1.4; overflow-wrap: anywhere;
            max-height: 46px; overflow: hidden; }
 /* One strip, left-aligned: zoom on the left, and the align group joins it while two or
