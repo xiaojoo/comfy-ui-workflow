@@ -103,6 +103,10 @@ cd web && npm install && npm run dev                                        # �
 cd server && .venv/Scripts/python.exe -m pytest tests -q                    # 62 项验收
 ```
 
+```bash
+wsl -d ComfyUI -- bash /mnt/h/workflow/server/comfyui_extension/install.sh   # 装引擎侧扩展，装完重启 ComfyUI
+```
+
 工作流画布在左侧导航「工作流画布」：左边点模板加入步骤 → 从卡片右边的方块端口拖到下一张卡片左边的端口
 → 点连线可以改「取上游第几张」→ 点卡片填这一步的参数（叠在画布右缘，和列表页同一个面板）→
 填画布名 → 保存 → ▶ 运行整条链。排布用 Shift+拖动框选（或 Ctrl+点选加选），左下角那条工具会多出
@@ -130,9 +134,10 @@ cd server && .venv/Scripts/python.exe -m pytest tests -q                    # 62
 直接把它装进引擎画布（新标签，等它启动完自动出现这张图）；下面一排两个小按钮切「ComfyUI 文件 / 提交用的 API」，
 右边是复制与下载（文件名就是 `<模板 id>.json`）。改抽屉里的参数，这份文件跟着变（停手 350ms 后自动重取），
 统计行会写明几个节点几根连线、节点定义是刚从引擎读的还是用的缓存。拖进 ComfyUI 前记得先把该行的图/视频选好，
-否则那几个节点进去是空的。一键这条路依赖引擎里的 `custom_nodes/studio_loader/`：**它只在引擎启动时注册路由**
-（`server.py:1247`），所以放进去或删掉之后必须重启 ComfyUI 才认；没它的时候按钮会明说没接到回执，
-而文件已经在 `workflows/studio/` 里，从「工作流」菜单点同名项一样能打开。
+否则那几个节点进去是空的。一键这条路依赖引擎里的 `custom_nodes/studio_loader/`，仓库留了一份副本 `server/comfyui_extension/studio_loader/`，
+装它一条命令：`wsl -d ComfyUI -- bash /mnt/h/workflow/server/comfyui_extension/install.sh`。
+**它只在引擎启动时注册路由**（`server.py:1247`），所以装完或删完必须重启 ComfyUI 才认；没它的时候按钮会明说
+没接到回执，而文件已经在 `workflows/studio/` 里，从「工作流」菜单点同名项一样能打开。
 
 阈值、色板、栅格一律读 `icon-pipeline/brand-kit.example.json`，不散落在代码里。
 `?lang=en` 或右上角按钮切中英文，默认中文。
