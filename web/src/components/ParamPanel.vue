@@ -38,6 +38,18 @@ const worstCase = computed(() => {
   return t.value.canvasWorst.replace(/\{(\w+)\}/g, (_, k) => ({ rep, tries, n: rep * tries, mins })[k])
 })
 
+// The gate measures a vectorised icon, so it can only hang on a step that hands back a
+// picture. Where it cannot apply the row stays and says why: a control that disappears
+// reads as a bug, and one that does nothing reads as a lie.
+const canGate = computed(() => props.template?.media === 'image')
+const gateOn = computed(() => props.policy?.gate || 'off')
+const gateOptions = computed(() => [
+  { value: 'off', label: t.value.canvasGateOff },
+  { value: 'check', label: t.value.canvasGateCheck },
+  { value: 'sweep', label: t.value.canvasGateSweep }])
+const gateNa = computed(() => t.value.canvasGateNa
+  .replace('{media}', t.value.portTypes[props.template?.media] || props.template?.media || ''))
+
 function setPolicy(key, value) {
   if (!props.policy) return
   props.policy[key] = value
@@ -534,9 +546,16 @@ function go() {
           <Select :model-value="policy?.on_error || 'stop'" :options="onErrorOptions" :label="t.canvasOnErr"
                   @update:model-value="setPolicy('on_error', $event)" />
         </label>
+        <label class="inrow">{{ t.canvasGate }}
+          <Select :model-value="gateOn" :options="gateOptions" :label="t.canvasGate" :disabled="!canGate"
+                  @update:model-value="setPolicy('gate', $event)" />
+        </label>
         <p class="jmeta">{{ worstCase }}</p>
         <p class="hint">{{ t.canvasRepeatHint }}</p>
         <p class="hint">{{ t.canvasRetryHint }}。{{ t.canvasOnErrHint }}。</p>
+        <p class="hint">{{ canGate ? t.canvasGateHint : gateNa }}</p>
+        <p v-if="canGate && gateOn === 'sweep'" class="hint">{{ t.canvasGateCost }}</p>
+        <p v-else-if="canGate && gateOn === 'check'" class="hint">{{ t.canvasGateCheckCost }}</p>
       </div>
 
       <p v-if="needPrompt" class="drift">{{ t.needPrompt }}</p>

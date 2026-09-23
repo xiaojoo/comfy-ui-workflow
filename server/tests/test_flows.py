@@ -15,8 +15,10 @@ from fastapi.testclient import TestClient
 from sqlalchemy import select
 
 from app import flows
+from app import gates
 from app import runner as runner_mod
 from app import templates
+from app.config import FIXTURES
 from app.db import Session
 from app.flows import _order, validate
 from app.main import app
@@ -218,9 +220,9 @@ def test_a_step_that_refuses_to_start_stops_the_chain(tmp_path, monkeypatch):
 
 # ------------------------------------------------------- what a step does when it fails
 
-def step(nid, tpl, retries=0, on_error="stop", repeat=1, **params):
+def step(nid, tpl, retries=0, on_error="stop", repeat=1, gate="off", **params):
     return {"id": nid, "template": tpl, "params": params, "position": {"x": 0, "y": 0},
-            "retries": retries, "on_error": on_error, "repeat": repeat}
+            "retries": retries, "on_error": on_error, "repeat": repeat, "gate": gate}
 
 
 def fake_engine(monkeypatch, tmp_path, fail=None, count=None, fail_nodes=None):
@@ -510,3 +512,161 @@ def test_a_run_recorded_before_the_step_policy_still_reads():
         st = c.get("/flows/runs/run_legacy").json()
     assert st["steps"][0]["state"] == "pending"
     assert st["steps"][0]["attempts"] is None and st["steps"][0]["retries"] is None
+    assert st["steps"][0]["gate"] is None
+
+
+# --------------------------------------------------------------- the delivery gate
+
+def fake_sweep(verdicts, fails=("nodes 461>300", "colors 7>4")):
+    """A stand-in for the vectoriser that answers from a list, one entry per repetition.
+
+    The real chain is exercised once, against the fixtures, below. What the *walk* is
+    tested against is what it does with a verdict, and that must not depend on a Rust
+    library's opinion about the eight-byte PNG the fake engine writes.
+    """
+    calls = []
+
+    def sweep(pngs, out, **kw):
+        n = len(calls)
+        ok = verdicts[min(n, len(verdicts) - 1)]
+        calls.append([Path(p).name for p in pngs])
+        out.mkdir(parents=True, exist_ok=True)
+        (out / "flat.svg").write_text("<svg xmlns='http://www.w3.org/2000/svg'/>", encoding="utf-8")
+        names = [Path(p).name for p in pngs]
+        return {"verdict": "PASS" if ok else "FAIL",
+                "tries": ["tight"] if ok else ["tight", "default", "coarse"],
+                "presets": ["tight"] if ok else [],
+                "svgs": [{"name": nm, "preset": "tight", "file": str(out / "flat.svg")} for nm in names]
+                        if ok else [],
+                "bad": [] if ok else names, "worst": None if ok else names[0],
+                "fails": [] if ok else list(fails), "seconds": 0.3}
+    return calls, sweep
+
+
+def gate_chain(monkeypatch, tmp_path, graph, verdicts):
+    """Run `graph` with the vectoriser replaced by a scripted verdict. Returns (status, calls)."""
+    attempts = fake_engine(monkeypatch, tmp_path, count={"portrait": 1, "hd": 1})
+    calls, sweep = fake_sweep(verdicts)
+    monkeypatch.setattr(flows, "COMFY_OUTPUT_ROOT", tmp_path)
+    monkeypatch.setattr(flows.gates, "sweep", sweep)
+    return run_chain(graph), attempts, calls
+
+
+def test_a_gate_on_a_step_that_makes_no_picture_is_refused_where_it_is_set():
+    for bad, says in [(step("n1", "char_portrait", gate="always", prompt="x"), "off、check、sweep"),
+                      (step("n1", "wan_t2v", gate="sweep", prompt="x"), "只能挂在出图的步骤")]:
+        with pytest.raises(Exception) as e:
+            validate({"nodes": [bad], "edges": []})
+        assert says in str(e.value.detail), e.value.detail
+
+
+def test_a_picture_the_gate_refuses_does_not_buy_another_generation(tmp_path, monkeypatch):
+    """The retry budget is for a step that failed; a refused picture is not that.
+
+    Re-rolling a seed costs 20-90s of GPU and the preset sweep costs 0.2s of CPU, so the
+    two must not be confused -- and the sentence has to name the columns, which is what
+    tells a person whether to change the prompt or accept the drawing.
+    """
+    st, attempts, calls = gate_chain(
+        monkeypatch, tmp_path,
+        {"nodes": [step("n1", "char_portrait", retries=2, gate="sweep", prompt="x"),
+                   step("n2", "upscale_image")],
+         "edges": [edge("n1", "n2", "image", "image")]}, [False])
+    assert st["state"] == "error", st
+    assert "nodes 461>300" in st["error"] and "一共提了 1 次" in st["error"], st["error"]
+    assert attempts["portrait"] == 1 and st["steps"][0]["attempts"] == 1, "the GPU was asked once"
+    assert st["steps"][0]["state"] == "error", "a green card over a refused picture is a lie"
+    assert st["steps"][0]["gate"]["verdict"] == "FAIL" and st["steps"][0]["gate"]["tries"] == ["tight", "default", "coarse"]
+    assert st["steps"][1]["task_id"] is None, "nothing downstream runs on a refused file"
+
+
+def test_a_refused_picture_can_be_chased_by_the_next_repetition(tmp_path, monkeypatch):
+    """循环 × 门禁: the second drawing is the one that ships, and the third is never paid for."""
+    st, _, calls = gate_chain(
+        monkeypatch, tmp_path,
+        {"nodes": [step("n1", "char_portrait", repeat=3, gate="sweep", prompt="x"),
+                   step("n2", "upscale_image")],
+         "edges": [edge("n1", "n2", "image", "image")]}, [False, True])
+    assert st["state"] == "done", st
+    runs = st["steps"][0]["runs"]
+    assert [r["gate"]["verdict"] for r in runs] == ["FAIL", "PASS"]
+    assert len(runs) == 2, "one deliverable picture is what 扫到过为止 asks for"
+    assert len(calls) == 2
+    with Session() as s:
+        hd = s.get(Task, st["steps"][1]["task_id"])
+        assert hd.params["image_task"] == runs[1]["task_id"], "the refused drawing never left the step"
+
+
+def test_a_check_verdict_is_recorded_without_holding_the_chain_back(tmp_path, monkeypatch):
+    """只判定: the number is the deliverable, not a gate."""
+    st, _, _ = gate_chain(
+        monkeypatch, tmp_path,
+        {"nodes": [step("n1", "char_portrait", gate="check", prompt="x"), step("n2", "upscale_image")],
+         "edges": [edge("n1", "n2", "image", "image")]}, [False])
+    assert st["state"] == "done", st
+    assert st["steps"][0]["state"] == "done" and st["steps"][0]["error"] is None
+    assert st["steps"][0]["gate"]["verdict"] == "FAIL" and st["steps"][0]["gate"]["bad"]
+    assert st["steps"][1]["state"] == "done"
+
+
+def test_an_accepted_vector_is_downloadable_and_nothing_else_is(tmp_path, monkeypatch):
+    """The href carries a position, and the run row is the only thing that names a file."""
+    st, _, _ = gate_chain(monkeypatch, tmp_path,
+                          {"nodes": [step("n1", "char_portrait", gate="sweep", prompt="x")], "edges": []},
+                          [True])
+    href = st["steps"][0]["gate"]["svgs"][0]["href"]
+    with TestClient(app) as c:
+        r = c.get(href)
+        assert r.status_code == 200 and r.headers["content-type"].startswith("image/svg")
+        assert c.get(href.rsplit("/", 1)[0] + "/1").status_code == 404
+        assert c.get("/flows/runs/nope/gate/n1/0").status_code == 404
+
+
+def test_a_stored_gate_path_that_reaches_outside_the_delivery_dir_is_refused():
+    """The guard is on the resolved path, not on what the URL looked like."""
+    with Session() as s:
+        f = Flow(name="g", graph={})
+        s.add(f)
+        s.commit()
+        s.add(FlowRun(flow_id=f.id, ref="run_escape", state="done", steps=[{
+            "node": "n1", "template": "icon_flat", "task_id": None, "error": None,
+            "gate": {"verdict": "PASS", "svgs": [
+                {"name": "x.png", "preset": "tight", "file": "../../../Windows/win.ini"}]}}]))
+        s.commit()
+    with TestClient(app) as c:
+        assert c.get("/flows/runs/run_escape/gate/n1/0").status_code == 400
+
+
+def test_a_vectoriser_that_panics_is_a_verdict_and_not_a_run_that_never_ends(tmp_path, monkeypatch):
+    """vtracer is a Rust extension: it panics with a BaseException, and `except Exception`
+    in the walk does not see those. Letting one escape would leave the run row reading
+    "running" with nothing left running it -- the failure mode with no card to point at.
+    """
+    class Panic(BaseException):
+        pass
+
+    def boom(pngs, out, **kw):
+        raise Panic("no geometry to trace")
+
+    attempts = fake_engine(monkeypatch, tmp_path, count={"portrait": 1})
+    monkeypatch.setattr(flows, "COMFY_OUTPUT_ROOT", tmp_path)
+    monkeypatch.setattr(flows.gates, "sweep", boom)
+    st = run_chain({"nodes": [step("n1", "char_portrait", gate="sweep", prompt="x")], "edges": []})
+    assert st["state"] == "error", st
+    assert "Panic" in st["error"] and "no geometry to trace" in st["error"], st["error"]
+    assert st["steps"][0]["gate"]["verdict"] == "FAIL"
+    assert attempts["portrait"] == 1, "a vectoriser that cannot run is not a reason to re-roll the seed"
+
+
+def test_the_real_vectoriser_passes_a_known_good_icon_at_the_first_preset(tmp_path):
+    """One end-to-end pass over vtracer, on the drawings the ruler itself is tuned on.
+
+    Asserting the preset list stops at `tight` is the cheap-retry claim: the sweep does
+    not walk three settings when the first one is accepted.
+    """
+    g = gates.sweep([FIXTURES / "gear_gt.png", FIXTURES / "shield_gt.png"], tmp_path / "g")
+    assert g["verdict"] == "PASS" and g["tries"] == ["tight"], g
+    assert sorted(s["name"] for s in g["svgs"]) == ["gear_gt.png", "shield_gt.png"]
+    text = Path(g["svgs"][0]["file"]).read_text(encoding="utf-8")
+    assert text.startswith("<svg") and "<path" in text, "the deliverable is the drawing, not a stub"
+    assert g["seconds"] < 2.0, f"the whole point is that this is cheap: {g['seconds']}s"

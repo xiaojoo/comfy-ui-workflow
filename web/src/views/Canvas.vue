@@ -325,7 +325,8 @@ function decorate() {
 // Watching the arrays themselves would re-fire on everything decorate writes; this
 // signature leaves those fields out, so the pass runs once per authored change.
 const authored = computed(() => [
-  nodes.value.map((n) => `${n.id}|${JSON.stringify(n.data.params)}|${n.data.repeat}|${n.data.retries}|${n.data.on_error}`).join('#'),
+  nodes.value.map((n) => `${n.id}|${JSON.stringify(n.data.params)}|${n.data.repeat}|${n.data.retries}`
+    + `|${n.data.on_error}|${n.data.gate}`).join('#'),
   edges.value.map((e) => `${e.source}>${e.target}:${e.targetHandle}:${e.data.kind === 'control'
     ? e.data.when : `${e.data.index}:${e.data.attempt ?? 0}`}`).join('#'),
 ].join('||'))
@@ -340,6 +341,7 @@ function toGraph() {
       ...(n.data.retries ? { retries: n.data.retries } : {}),
       ...(n.data.on_error && n.data.on_error !== 'stop' ? { on_error: n.data.on_error } : {}),
       ...(n.data.repeat > 1 ? { repeat: n.data.repeat } : {}),
+      ...(n.data.gate && n.data.gate !== 'off' ? { gate: n.data.gate } : {}),
       position: { x: Math.round(n.position.x), y: Math.round(n.position.y) },
     })),
     edges: edges.value.map((e) => e.data.kind === 'control'
@@ -357,7 +359,7 @@ function fromGraph(g, tplById) {
     return { id: n.id, type: 'step', position: { ...n.position },
              data: { tpl, params: { ...clone(tpl.defaults), ...n.params }, order: 0, run: null,
                      changed: [], pickIdx: 0, retries: n.retries || 0, on_error: n.on_error || 'stop',
-                     repeat: n.repeat || 1 } }
+                     repeat: n.repeat || 1, gate: n.gate || 'off' } }
   })
   edges.value = (g.edges || []).map((e) => e.kind === 'control' ? mkCtl(e.from, e.to, e.when)
     : mkEdge(e.from, e.out, e.to, e.in, e.index ?? 0, e.attempt ?? 0))

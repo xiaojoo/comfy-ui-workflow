@@ -13,13 +13,16 @@ import uuid
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
+from pathlib import Path, PurePosixPath
+from pathlib import PurePosixPath
 
 from fastapi import HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 
-from . import comfy, templates
+from . import comfy, gates, templates
 from . import tasks as task_svc
+from .config import COMFY_OUTPUT_ROOT, WORK
 from .db import Session
 from .models import Flow, FlowRun, Task
 
@@ -32,6 +35,11 @@ MAX_RETRY = 3
 # card can still show as a row of thumbnails, and each one is a real generation.
 MAX_REPEAT = 8
 ON_ERROR = ("stop", "skip")
+# What a step does with its picture once the engine has handed it back. "off" is the
+# ordinary run; "check" measures and reports but lets the chain through; "sweep" holds
+# the line until the gate signs off. See gates.sweep for what that costs.
+GATE = ("off", "check", "sweep")
+GATE_ROOT = WORK / "gates"
 # A control wire carries no picture: it says when the step at its far end is allowed to
 # run. "fail" is the useful one -- a fallback workflow that only fires when the first one
 # did not produce anything.
@@ -89,6 +97,14 @@ def validate(graph):
         rep = n.get("repeat", 1)
         if isinstance(rep, bool) or not isinstance(rep, int) or not 1 <= rep <= MAX_REPEAT:
             raise HTTPException(422, f"步骤 {nid} 的执行次数要是 1–{MAX_REPEAT} 的整数")
+        gt = n.get("gate", "off")
+        if gt not in GATE:
+            raise HTTPException(422, f"步骤 {nid} 的交付门禁只能是 {'、'.join(GATE)}")
+        # The gate judges a vectorised icon. Hanging it on a step that hands back a clip
+        # or a mesh would be a switch wired to nothing, so it is refused where it is set.
+        if gt != "off" and tpl["media"] != "image":
+            raise HTTPException(422, f"步骤 {nid} 出的是 {tpl['media']}，"
+                                     f"矢量门禁只能挂在出图的步骤上")
         by_id[nid] = tpl
 
     wired = set()
@@ -183,7 +199,7 @@ def start(flow_id):
         r = FlowRun(flow_id=flow_id, ref=run_ref, state="running",
                     steps=[{"node": n["id"], "template": n["template"], "task_id": None, "error": None,
                             "retries": n.get("retries", 0), "on_error": n.get("on_error", "stop"),
-                            "repeat": n.get("repeat", 1), "runs": [],
+                            "repeat": n.get("repeat", 1), "gate": None, "runs": [],
                             "attempts": 0, "skipped": False} for n in order])
         s.add(r)
         s.commit()
@@ -245,19 +261,37 @@ def _walk(run_id, graph, order):
                 params[f"{media_of[e['from']]}_index"] = int(e.get("index") or 0)
             runs = []
             reason, state, tried = None, "done", 0
-            for rep in range(int(node.get("repeat") or 1)):
+            want = node.get("gate") or "off"
+            reps = int(node.get("repeat") or 1)
+            for rep in range(reps):
                 if rep and "seed" in tpl["defaults"]:
                     # Every repetition is a different picture for the same reason a retry
                     # is: the engine caches an identical graph.
                     params["seed"] = random.randrange(10 ** 9)
                 tid, state, reason, submissions = _attempt(run_id, node, tpl, params)
                 tried += submissions
-                runs.append({"task_id": tid, "state": state, "error": reason})
-                steps = _patch(steps, run_id, current, task_id=tid, attempts=tried, runs=runs)
-                if state == "done":
-                    delivered.setdefault(current, []).append(tid)
-                    continue
-                break
+                g = _gate(run_id, current, rep, tid) if state == "done" and want != "off" else None
+                runs.append({"task_id": tid, "state": state, "error": reason, "gate": g})
+                steps = _patch(steps, run_id, current, task_id=tid, attempts=tried, runs=runs, gate=g)
+                if state != "done":
+                    break
+                if g and want == "sweep" and g["verdict"] != "PASS":
+                    # The picture exists and the gate will not have it. The presets are
+                    # spent, so the only lever left is a different drawing -- and when the
+                    # step was told to make several, the next one is that chance.
+                    reason = _gate_says(g)
+                    if rep + 1 < reps:
+                        continue
+                    # Out of pictures, so this step delivers nothing: a file the gate
+                    # refused must not travel downstream behind a green card.
+                    state = "error"
+                    break
+                delivered.setdefault(current, []).append(tid)
+                if g and want == "sweep":
+                    # 扫到过为止: one deliverable picture is what that asks for, and the
+                    # rest of the repetitions would be GPU time spent on a choice nobody
+                    # asked the gate to make.
+                    break
             if state == "done":
                 outcome[current] = "done"
             if state == "cancelled":
@@ -277,6 +311,46 @@ def _walk(run_id, graph, order):
     except Exception as exc:
         steps = _patch(steps, run_id, current, error=f"{type(exc).__name__}: {exc}")
         _close(run_id, "error", f"{type(exc).__name__}: {exc}")
+
+
+def _gate(run_id, nid, rep, task_id):
+    """Vectorise what this repetition handed back and put it through the gate.
+
+    Runs on the flow thread, and is cheap there: 0.19s of CPU per preset for a 1024² icon,
+    against 20-90s on the GPU for another seed. That asymmetry is the whole design -- a
+    path-count failure is chased with a preset, and only when every preset has failed
+    does the step fall back on asking the model for a different drawing.
+    """
+    with Session() as s:
+        outs = [o for o in (s.get(Task, task_id).outputs or [])
+                if str(o.get("filename", "")).lower().endswith(".png")]
+    if not outs:
+        return {"verdict": "FAIL", "tries": [], "presets": [], "svgs": [], "bad": [],
+                "worst": None, "fails": ["这一步没有交回 png，无从矢量化"], "seconds": 0.0}
+    pics = [COMFY_OUTPUT_ROOT / o.get("subfolder", "") / o["filename"] for o in outs]
+    try:
+        g = gates.sweep(pics, GATE_ROOT / f"run{run_id}" / f"{nid}-{rep}")
+    except BaseException as exc:
+        # vtracer is a Rust extension: it panics rather than raising, and a PanicException
+        # is not an Exception, so it would walk straight past the handler in _walk and leave
+        # the run row saying "running" with nothing left running it. A gate that could not
+        # measure is a failure with a reason, recorded like any other verdict.
+        return {"verdict": "FAIL", "tries": [], "presets": [], "svgs": [],
+                "bad": [p.name for p in pics], "worst": pics[0].name,
+                "fails": [f"矢量化没能跑完：{type(exc).__name__}: {exc}"], "seconds": 0.0}
+    # Storing the path relative to the gate root rather than as given means moving
+    # WORK_DIR does not strand every SVG this chain ever delivered.
+    for v in g["svgs"]:
+        v["file"] = PurePosixPath(f"run{run_id}", f"{nid}-{rep}", Path(v["file"]).name).as_posix()
+    return g
+
+
+def _gate_says(g):
+    """The refusal names the columns, because that is what decides the next move: a path
+    count is a vectoriser setting, an interior mismatch is the drawing itself."""
+    bad = f"{len(g['bad'])} 张都没过" if len(g["bad"]) > 1 else (g["bad"][0] if g["bad"] else "没有产物")
+    return (f"矢量门禁未过（{bad}，试过 {'→'.join(g['tries']) or '无预设'}）："
+            f"{'、'.join(g['fails'])}")
 
 
 def _passes(up, when):
@@ -374,7 +448,8 @@ def _reason(task_id, state):
     return err or f"在 {state} 状态停留过久（超过自身时限仍未落定）"
 
 
-def _patch(steps, run_id, nid, task_id=None, error=None, attempts=None, skipped=None, runs=None):
+def _patch(steps, run_id, nid, task_id=None, error=None, attempts=None, skipped=None, runs=None,
+           gate=None):
     """Update one step and persist the whole list, so a refresh mid-run sees the truth."""
     steps = steps or _load(run_id).steps
     out = [dict(x) for x in steps]
@@ -388,6 +463,8 @@ def _patch(steps, run_id, nid, task_id=None, error=None, attempts=None, skipped=
                 x["attempts"] = attempts
             if skipped is not None:
                 x["skipped"] = skipped
+            if gate is not None:
+                x["gate"] = gate
             if runs is not None:
                 x["runs"] = [dict(r) for r in runs]
     with Session() as s:
@@ -420,6 +497,11 @@ def status(run_ref):
             # A skipped step has no task at all, and "pending" would read as "still to
             # come" to a page that is about to finish.
             state = "skipped" if st.get("skipped") else (t.state if t else "pending")
+            # A step can hold a picture the gate refused: the task did its job and the
+            # chain still stopped. Reading "done" off the task row alone would show green
+            # over a red error line.
+            if st.get("error") and state == "done":
+                state = "error"
             # One entry per repetition: the card shows them as a row and a wire picks
             # which one it feeds from. The task row is the truth about each, so this
             # reads through to it rather than trusting what was written mid-run.
@@ -428,16 +510,56 @@ def status(run_ref):
                 rt = s.get(Task, rn["task_id"]) if rn.get("task_id") else None
                 runs.append({"task_id": rn.get("task_id"), "state": rt.state if rt else rn.get("state"),
                              "seconds": rt.seconds if rt else None, "error": rn.get("error"),
-                             "outputs": rt.outputs if rt else []})
+                             "gate": rn.get("gate"), "outputs": rt.outputs if rt else []})
             steps.append({**{k: st.get(k) for k in ("node", "template", "task_id", "error",
                                                     "retries", "on_error", "repeat", "attempts")},
                           "state": state, "runs": runs,
+                          "gate": _gate_out(r.ref, st["node"], st.get("gate")),
                           "progress": t.progress if t else 0,
                           "seconds": t.seconds if t else None,
                           "outputs": t.outputs if t else [],
                           "log_tail": (t.log[-1]["msg"] if t and t.log else None)})
         return {"run": r.ref, "flow_id": r.flow_id, "state": r.state, "error": r.error,
                 "created_at": r.created_at, "finished_at": r.finished_at, "steps": steps}
+
+
+def _gate_out(run_ref, nid, g):
+    """The step's gate record, with a download link per SVG it accepted.
+
+    The links are built here rather than stored, so the only thing a client can name is a
+    position in this list and the route resolves the file from the run row.
+    """
+    if not g:
+        return None
+    out = {k: v for k, v in g.items() if k != "svgs"}
+    out["svgs"] = [{**v, "dl": PurePosixPath(v["file"]).name,
+                    "href": f"/flows/runs/{run_ref}/gate/{nid}/{i}"}
+                   for i, v in enumerate(g.get("svgs") or [])]
+    return out
+
+
+def deliverable(run_ref, nid, index):
+    """The SVG file one step's gate accepted, resolved out of the run row.
+
+    Only a node id and a position in a list the database wrote come from the URL, and the
+    path still has to land under the gate root -- the same rule the output delete follows,
+    because a delivery endpoint that can name a file is a read of the whole disk.
+    """
+    with Session() as s:
+        r = s.scalar(select(FlowRun).where(FlowRun.ref == run_ref))
+        if r is None:
+            raise HTTPException(404, "没有这次运行")
+        for st in r.steps:
+            svgs = (st.get("gate") or {}).get("svgs") if st["node"] == nid else None
+            if svgs and index < len(svgs):
+                root = GATE_ROOT.resolve()
+                path = (root / svgs[index]["file"]).resolve()
+                if not path.is_relative_to(root):
+                    raise HTTPException(400, "门禁产物不在交付目录内，拒绝下发")
+                if not path.is_file():
+                    raise HTTPException(410, "这个 SVG 已经不在了，交付目录被清过")
+                return path
+    raise HTTPException(404, "这一步没有这个交付文件")
 
 
 def cancel(run_ref):

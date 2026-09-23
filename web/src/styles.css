@@ -763,6 +763,20 @@ figcaption { font-family: var(--mono); font-size: 10px; color: var(--muted); mar
 .fn .thumb img, .fn .thumb video { width: 100%; height: 100%; object-fit: cover; display: block; }
 .fn .thumb .ply { position: absolute; inset: 0; display: grid; place-items: center; color: #fffc;
                  font-size: 22px; text-shadow: 0 1px 6px #000a; }
+/* What the delivery gate made of this step's picture. Monospace: the preset name and the
+   seconds are measurements, and they read as prose in the UI font. */
+.fn .gate { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; margin-top: 7px;
+            font-family: var(--mono); font-size: 10px; }
+.fn .gate b { padding: 1px 5px; border-radius: 4px; font-weight: 600; }
+.fn .gate.ok b { color: var(--ok); background: #35c07e1f; box-shadow: inset 0 0 0 1px #35c07e55; }
+.fn .gate.no b { color: var(--bad); background: #ef5b6b1f; box-shadow: inset 0 0 0 1px #ef5b6b55; }
+.fn .gate i { font-style: normal; color: var(--muted); }
+.fn .gate .dl { flex: none; padding: 1px 5px; color: var(--accent-2); text-decoration: none;
+                background: #101d38; border: 1px solid #274079; border-radius: 4px; }
+.fn .gate .dl:hover { border-color: var(--accent-2); color: #cfe0ff; }
+/* The columns that kept it from passing, when the red line below is not already saying them. */
+.fn .why { color: var(--bad); font-size: 10px; line-height: 1.4; font-family: var(--mono);
+           overflow-wrap: anywhere; }
 .fn footer { display: flex; align-items: center; gap: 6px; margin-top: 8px; }
 .fn .st { font-size: 10.5px; color: var(--muted); }
 .fn .pg { font-family: var(--mono); font-size: 10px; color: var(--muted); }

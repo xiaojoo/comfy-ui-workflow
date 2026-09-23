@@ -81,6 +81,22 @@
   红失败 / 琥珀已跳过（不带红边）/ 绿已完成。分支那条单独真跑过一次（16.1s）：s1 用不存在的权重 →
   引擎 400 真失败，吃它图的那步已跳过，条件线（fail）后面的替补步真跑出 `s2_00001_.png`，收尾 partial。
 
+- **每一步还能要求「这张图能不能当矢量图标交付」**：同一个「这一步」页签多一格「交付门禁」，
+  三档在界面上选——不检查 / 只判定，不拦 / 扫到过为止。开了就把这一步交回的每张 png 走一遍
+  矢量化（vtracer）→ 规范 → 压平 → 门禁 11 列，用的就是批量任务那把尺子（`gates.sweep` 直接复用
+  `tools/vectorize_local.PRESETS` 和 `qa_gate`，不另立第二套阈值）。扫到过为止 = tight→default→coarse
+  逐档试，某张过了就不再为它试后面的档；三档都不过才多要一遍的图，遍数用完仍未过 → 这步失败，
+  下游拿不到它的产物。**门禁未过不烧重试预算**：重试是给「引擎没跑成」的，换 seed 是 20–90s 的 GPU，
+  换预设是 0.6s 的 CPU，两件事不能混。节点卡上出 `PASS`/`FAIL` 角标、`3/4 未过`、未过的列名，
+  以及过了的每张图一个 ⤓ 下载；SVG 落在 `server/work/gates/run{id}/{步骤}-{遍}/`，
+  路由 `GET /flows/runs/{ref}/gate/{node}/{下标}` 只认数据库那一格记的文件，解出来的路径还必须
+  仍在 gates 目录里。真引擎实测（2026-09-23）：批量图标一步 4 张、三档跑完 2.23s，1 张在 coarse
+  下过门禁并交出 5173 字节 / 4 条 path 的 SVG，3 张未过（`nodes 348>260`、`rmse 11.2>10.0`）；
+  单图标步要 3 遍，3 张全未过（`nodes 953>260`、`rmse 21.9>10.0`），整条 18.2s 收尾 error、
+  下游停在未开始。**负结果写在这**：生成图没经 L4 抠图和 L5.6 调色板归约，直接描出来的节点数和
+  内部色差按品牌图标预算就是超的，预设扫描救得了 node 数救不了 rmse——所以今天「扫到过为止」
+  大概率烧完遍数，能日常挂的是「只判定」；要拿它当真正的门禁，链里得先有抠图那一步。
+
 - **点一下就能把这条工作流摆进 ComfyUI 画布**：抽屉里的「在 ComfyUI 打开」先走 `/workflow/push`，
   把同一份 UI 格式文件写进引擎自己的 `user/default/workflows/studio/`（`POST /userdata/workflows%2F…`，
   实测子目录必须编进文件名，`?dir=` 在写入时被忽略），再开 ComfyUI 标签并 postMessage 让它加载。
@@ -138,8 +154,12 @@ bash tools/run_d0.sh                                   # 抠图→纯色背景�
 ```bash
 cd server && .venv/Scripts/python.exe -m uvicorn app.main:app --port 8191   # 后端
 cd web && npm install && npm run dev                                        # 界面 http://localhost:5180
-cd server && .venv/Scripts/python.exe -m pytest tests -q                    # 91 项验收
+cd server && .venv/Scripts/python.exe -m pytest tests -q                    # 106 项验收
 ```
+
+画布上的「交付门禁」在 **Windows 侧** 矢量化，所以后端的 `.venv` 也要装 vtracer：
+`cd server && .venv/Scripts/python.exe -m pip install -i https://pypi.tuna.tsinghua.edu.cn/simple vtracer`
+（0.6.15，实测一张 1024² 图标三档 0.6s。没装的话后端启动即 import 失败——宁可起不来，不要默默没有门禁。）
 
 ```bash
 wsl -d ComfyUI -- bash /mnt/h/workflow/server/comfyui_extension/install.sh   # 装引擎侧扩展，装完重启 ComfyUI
@@ -207,7 +227,8 @@ wsl -d ComfyUI -- bash /mnt/h/workflow/server/comfyui_extension/install.sh   # �
   实测 14 行里 10 行有图、3 行还是空框（`图标动画-文生视频`、`人物视频-参考锁脸`、`视频转高清`：
   产物全是视频，没有图片可取，仓库自带图也没有它们），这三张要么自己上传封面，要么等能从视频里取首帧。
   预览轨道里的产物图是真的（全部运行，选中卡片后只看这条工作流的）。
-- 生成与门禁在界面上还是两次动作，没串成「生成→抠图→矢量化→门禁」一键。
+- 「生成→矢量化→门禁」在画布上已经是一键（见上），但链里**没有抠图那一步的模板**，画布上的门禁量的
+  是白底生成图，比走完整流水线（L4 抠图 + L5.6 归色）的结果严：实测 7 张新图标只有 1 张过，还得靠 coarse 档。
 - 设计稿的 6 类里我们有企业图标（外加视频与 3D 两条）和人物两条实测链路；
   电商主图/产品海报既无工作流也无门禁标准，且环境里没有 SDXL。
 - 生成耗时冷热差一个量级：稳定态 3 张 1024×1024 实测 4.0–4.1s（显存稳定 ~3.1GB 空闲），

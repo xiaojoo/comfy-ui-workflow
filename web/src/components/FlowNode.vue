@@ -31,6 +31,10 @@ const shot = computed(() => {
 })
 const isClip = computed(() => /\.(mp4|webm|mov)$/i.test(shot.value?.filename || ''))
 const changed = computed(() => props.data.changed || [])
+// What the delivery gate said about the last picture this step made. The record is the
+// server's -- the columns, the preset that carried it, the seconds -- so the card cannot
+// claim a verdict the ruler did not give.
+const gate = computed(() => step.value.gate || null)
 // What this step was told to do beyond one plain run, shown on the card so the plan is
 // readable without opening the drawer.
 const pol = computed(() => {
@@ -38,6 +42,8 @@ const pol = computed(() => {
   if ((d.repeat || 1) > 1) out.push(t.value.canvasBadgeRepeat.replace('{n}', d.repeat))
   if (d.retries) out.push(t.value.canvasBadgeRetry.replace('{n}', d.retries))
   if (d.on_error === 'skip') out.push(t.value.canvasBadgeSkip)
+  if (d.gate === 'sweep') out.push(t.value.canvasBadgeGateSweep)
+  else if (d.gate === 'check') out.push(t.value.canvasBadgeGateCheck)
   return out
 })
 // The ✕ is revealed under the pointer, not by :hover -- Chrome was measured holding
@@ -76,6 +82,21 @@ const hot = ref(false)
       <span v-if="isClip" class="ply">▶</span>
     </div>
     <p v-else-if="gone" class="none">{{ t.deletedRun }}</p>
+
+    <!-- The gate's verdict on this step's last picture, and one download per SVG it
+         accepted. The failing columns are only spelled out when the card is not already
+         saying them in red below. -->
+    <p v-if="gate" class="gate" :class="gate.verdict === 'PASS' ? 'ok' : 'no'">
+      <b>{{ gate.verdict }}</b>
+      <i v-if="gate.verdict === 'PASS' && gate.presets.length">{{ t.canvasGateBy }} {{ gate.presets.join('/') }}</i>
+      <i v-if="gate.bad.length">{{ t.canvasGateBad.replace('{n}', gate.bad.length)
+                                        .replace('{N}', gate.bad.length + gate.svgs.length) }}</i>
+      <i>{{ gate.seconds }}s</i>
+      <a v-for="(s, i) in gate.svgs" :key="s.href" class="dl" :href="s.href" :download="s.dl"
+         :title="gate.svgs.length > 1 ? t.canvasGateSvgN.replace('{n}', i + 1) : t.canvasGateSvg"
+         @click.stop>⤓ {{ gate.svgs.length > 1 ? i + 1 : t.canvasGateSvg }}</a>
+    </p>
+    <p v-if="gate && gate.verdict !== 'PASS' && !step.error" class="why">{{ gate.fails.join('、') }}</p>
 
     <footer>
       <span class="dot" />

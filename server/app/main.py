@@ -411,3 +411,10 @@ def run_flow(flow_id: int):
 def cancel_flow_run(run_ref: str):
     """Stop a live chain: the step in flight gives up the engine, the rest never start."""
     return flows.cancel(run_ref)
+
+
+@app.get("/flows/runs/{run_ref}/gate/{node}/{index}")
+def get_gate_svg(run_ref: str, node: str, index: int):
+    """One vector a step's delivery gate accepted. The path comes from the run row, never
+    from the caller -- see flows.deliverable."""
+    return FileResponse(flows.deliverable(run_ref, node, index), media_type="image/svg+xml")

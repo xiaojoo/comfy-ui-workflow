@@ -11,6 +11,9 @@ const props = defineProps({
   modelValue: { type: [String, Number], default: '' },
   options: { type: Array, default: () => [] },
   label: { type: String, default: '' },
+  // A control that cannot be honoured stays on the row and says so -- the reason goes in
+  // the hint line under it, which is why this is a disable rather than a v-if.
+  disabled: { type: Boolean, default: false },
 })
 const emit = defineEmits(['update:modelValue'])
 
@@ -114,6 +117,7 @@ onBeforeUnmount(hide)
 
 <template>
   <button ref="btn" type="button" class="sel" :class="{ on: open }" :aria-label="label"
+          :disabled="disabled"
           aria-haspopup="listbox" :aria-expanded="open"
           :aria-activedescendant="open ? optId(active) : undefined"
           @click="open ? hide() : show()" @keydown="onKey">
